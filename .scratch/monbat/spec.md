@@ -188,11 +188,20 @@ Domain language follows the project [GLOSSARY.md](../../GLOSSARY.md):
   * `GET /`: Renders self-contained dark-mode dashboard HTML. A configured
     battery with no reading shows `No reading yet` without telemetry fields.
   * `GET /api/latest`: Returns a JSON dictionary keyed by every configured
-    battery ID; batteries with no reading have a `null` value. Serialize
-    readings with `dataclasses.asdict` and preserve missing values as `None`.
-  * `GET /api/history?hours=24`: Returns time-series readings for historical
-    analysis as part of the Iteration 1 API. The visual graph UI that uses this
-    data is planned for Iteration 2.
+    battery ID. Each value includes the configured name and address, an
+    optional Telemetry object, a status, and optional cell delta. Match each
+    configured battery ID to the database `battery_id`. When no reading exists,
+    retain the view object with `telemetry: null` and `no-reading-yet` status.
+    Mark a reading `offline` when its timestamp is older than twice the
+    configured poll interval; otherwise derive `charging`, `discharging`, or
+    `idle` from current. Calculate cell delta in mV from the cell voltage
+    extrema, with `null` when no cell values exist. These status and delta
+    fields belong to the API view and are not persisted. Serialize Telemetry
+    with `dataclasses.asdict`.
+  * `GET /api/history?hours=24`: Returns a plain chronological JSON list of
+    time-series rows, each tagged with battery ID, configured name and address,
+    and Telemetry fields. `hours` must be positive. This is part of the
+    Iteration 1 API; the visual graph UI is planned for Iteration 2.
 * **Offgrid-Ready UI Architecture**:
   * **100% Offline**: Zero external CDNs, zero web fonts, zero third-party script tags.
   * **Pure CSS Grid Theme**: Responsive multi-card layout with state-of-charge bars, color-coded charge/discharge metrics, cell voltage chips, and delta imbalance indicators.

@@ -8,5 +8,9 @@ def main() -> None:
             from monbat.discover import run_discover
 
             asyncio.run(run_discover())
+        case ["serve"] | []:
+            from monbat.app import serve
+
+            serve()
         case _:
-            print("Usage: monbat discover")
+            print("Usage: monbat [discover|serve]")

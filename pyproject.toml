@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Local BLE battery telemetry monitor"
 readme = "README.md"
 requires-python = ">=3.15"
-dependencies = ["bleak>=0.22"]
+dependencies = ["bleak>=0.22", "fastapi>=0.115", "uvicorn>=0.30"]
 
 [project.scripts]
 monbat = "monbat:main"
@@ -15,7 +15,7 @@ build-backend = "uv_build"
 
 [dependency-groups]
 dev = [
-    "httpx>=0.27",
+    "httpx2>=2.0.0",
     "pytest>=9.1.1",
 ]
 
