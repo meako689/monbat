@@ -1,7 +1,8 @@
 """PROTOTYPE: FastAPI Dashboard & UI Architecture.
 
-Throwaway prototype validating the Dashboard HTML/CSS layout, offline auto-refresh,
-FastAPI lifespan poller pattern, and lightweight endpoints.
+Throwaway prototype validating the Dashboard layout and offline auto-refresh
+with mock telemetry. The target FastAPI lifecycle and API contract are recorded
+by create_fastapi_app_spec().
 """
 
 from __future__ import annotations
@@ -223,7 +224,18 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
     function renderBatteries(batteries) {
       const container = document.getElementById('batteries-grid');
-      container.innerHTML = Object.values(batteries).map(b => {
+      container.innerHTML = Object.entries(batteries).map(([batteryId, b]) => {
+        if (b === null) {
+          return `
+            <div class="card">
+              <div class="card-header">
+                <div class="card-title">Battery ${batteryId}</div>
+                <span class="badge offline">No reading yet</span>
+              </div>
+            </div>
+          `;
+        }
+
         const delta = (Math.max(...b.cell_voltages) - Math.min(...b.cell_voltages)).toFixed(3);
         const currentClass = b.current_a > 0 ? 'charge' : (b.current_a < 0 ? 'discharge' : '');
         const currentSign = b.current_a > 0 ? '+' : '';
@@ -306,41 +318,70 @@ def create_fastapi_app_spec() -> str:
     """Returns the code structure to be implemented in src/monbat/app.py."""
     return '''
 from contextlib import asynccontextmanager
+from dataclasses import asdict
 import asyncio
+import time
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 from monbat.db import TelemetryRepository
-from monbat.poller import run_poller_task
+from monbat.bms import BatteryTelemetry
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    # Startup: Initialize DB and spawn poller task
-    repo = TelemetryRepository("monbat.db")
-    repo.init_db()
-    poller_task = asyncio.create_task(run_poller_task(repo))
-    yield
-    # Shutdown: Cancel background poller
-    poller_task.cancel()
-    try:
-        await poller_task
-    except asyncio.CancelledError:
-        pass
-
-app = FastAPI(title="monbat", lifespan=lifespan)
-
-@app.get("/", response_class=HTMLResponse)
-async def dashboard_page():
-    return HTML_TEMPLATE
-
-@app.get("/api/latest")
-async def get_latest_telemetry():
-    # Returns latest snapshot for both batteries as JSON
+# `serve()` loads config, creates one repository, and passes it to build_app.
+async def run_poller_task(config: AppConfig, repo: TelemetryRepository) -> None:
     ...
 
-@app.get("/api/history")
-async def get_telemetry_history(hours: int = 24):
-    # Returns downsampled history for charting
-    ...
+def build_app(
+    config: AppConfig,
+    repo: TelemetryRepository,
+    *,
+    start_poller: bool = True,
+) -> FastAPI:
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        await repo.init_db()
+        poller_task: asyncio.Task[None] | None = None
+        if start_poller:
+            poller_task = asyncio.create_task(run_poller_task(config, repo))
+        try:
+            yield
+        finally:
+            if poller_task is not None:
+                poller_task.cancel()
+                try:
+                    await poller_task
+                except asyncio.CancelledError:
+                    pass
+
+    app = FastAPI(title="monbat", lifespan=lifespan)
+
+    @app.get("/", response_class=HTMLResponse)
+    async def dashboard_page():
+        return HTML_TEMPLATE
+
+    @app.get("/api/latest")
+    async def get_latest_telemetry():
+        latest = {}
+        for battery in config.batteries:
+            telemetry: BatteryTelemetry | None = await repo.get_latest_telemetry(
+                battery.id
+            )
+            latest[battery.id] = asdict(telemetry) if telemetry is not None else None
+        return latest
+
+    @app.get("/api/history")
+    async def get_telemetry_history(hours: int = 24):
+        since_timestamp = time.time() - hours * 3600
+        history = {}
+        for battery in config.batteries:
+            readings = await repo.get_history(battery.id, since_timestamp)
+            history[battery.id] = [asdict(reading) for reading in readings]
+        return history
+
+    return app
+
+# Example app construction in serve():
+# repo = TelemetryRepository(config.poller.sqlite_path)
+# app = build_app(config, repo)
 '''
 
 # ==============================================================================

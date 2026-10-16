@@ -4,7 +4,7 @@
 
 `monbat` is a lightweight, local battery monitoring service for a home offgrid power bank composed of two (2) Bluetooth-enabled Redodo LiFePO4 batteries. Linux Mint is the primary deployment target; macOS is also supported for development and operation through Bleak's CoreBluetooth backend. Both platforms require a compatible BLE adapter and operating-system permissions.
 
-The system connects over Bluetooth Low Energy (BLE), queries real-time battery management system (BMS) telemetry every 30 seconds (configurable), stores time-series readings in a local SQLite database in Write-Ahead Logging (WAL) mode, and serves an offgrid-ready, zero-dependency web dashboard via FastAPI.
+The system connects over Bluetooth Low Energy (BLE), polls each battery sequentially, then waits a configurable delay (30 seconds by default) before the next polling pass. It stores time-series readings in a local SQLite database in Write-Ahead Logging (WAL) mode and serves an offgrid-ready dashboard via FastAPI.
 
 ---
 
@@ -28,9 +28,9 @@ Domain language follows the project [GLOSSARY.md](../../GLOSSARY.md):
 * **Battery**: A physical offgrid LiFePO4 battery pack equipped with an internal BLE BMS.
 * **BMS**: Battery Management System communicating via GATT service `0xFFE0`.
 * **Telemetry**: Immutable point-in-time snapshot of battery metrics (pack voltage, net current, power, SOC %, remaining/total Ah, temperatures, cell voltages).
-* **Poller**: Async background task querying each Battery sequentially every 30 seconds.
+* **Poller**: Async background task querying each Battery sequentially, then waiting the configured delay (30 seconds by default) before the next pass.
 * **Discovery Script**: Interactive one-off CLI (`monbat discover`) to scan, select, and assign friendly aliases.
-* **Dashboard**: Web UI served by FastAPI displaying real-time metrics and historical graphs.
+* **Dashboard**: Web UI served by FastAPI displaying real-time metrics. Historical charge/discharge graphs are planned for Iteration 2.
 
 ---
 
@@ -67,6 +67,7 @@ Domain language follows the project [GLOSSARY.md](../../GLOSSARY.md):
   name = "Battery 2 (Lower)"
   address = "AA:BB:CC:44:55:66"
   ```
+  `poll_interval_seconds` is the delay after a complete sequential polling pass.
 * **Parsing & Writing**:
   * Read via Python standard library `tomllib`.
   * Written via a lightweight internal serializer without external YAML/TOML writer dependencies.
@@ -118,11 +119,9 @@ Domain language follows the project [GLOSSARY.md](../../GLOSSARY.md):
 
 * **Database Mode**: Local SQLite database at `monbat.db` (configurable).
 * **PRAGMAs**:
-  ```sql
-  PRAGMA journal_mode = WAL;
-  PRAGMA synchronous = NORMAL;
-  PRAGMA busy_timeout = 5000;
-  ```
+  * During database initialization, set `PRAGMA journal_mode = WAL;`.
+  * On every connection, set `PRAGMA synchronous = NORMAL;` and
+    `PRAGMA busy_timeout = 5000;`.
 * **Table Schema**:
   ```sql
   CREATE TABLE IF NOT EXISTS telemetry (
@@ -144,34 +143,56 @@ Domain language follows the project [GLOSSARY.md](../../GLOSSARY.md):
   ON telemetry (battery_id, timestamp DESC);
   ```
 * **Repository Interface (`TelemetryRepository`)**:
-  * `save_telemetry(battery_id: str, telemetry: BatteryTelemetry) -> None`
-  * `get_latest_telemetry(battery_id: str) -> BatteryTelemetry | None`
-  * `get_history(battery_id: str, since_timestamp: float) -> list[BatteryTelemetry]`
-  * Async execution: queries run inside `asyncio.to_thread` to maintain unblocked event loop concurrency.
+  * `async def init_db() -> None`
+  * `async def save_telemetry(battery_id: str, telemetry: BatteryTelemetry) -> None`
+  * `async def get_latest_telemetry(battery_id: str) -> BatteryTelemetry | None`
+  * `async def get_history(battery_id: str, since_timestamp: float) -> list[BatteryTelemetry]`
+  * Each public method runs its complete synchronous `sqlite3` operation inside
+    `asyncio.to_thread`; the worker opens and closes its own connection.
+  * Persist `BatteryTelemetry.soc_percent` exactly as provided. The repository
+    does not derive, normalize, or otherwise transform it on save or read.
 
 ---
 
 ### 4.4 Web Service & Dashboard (`src/monbat/app.py`)
 
 * **Framework**: FastAPI with lifespan background Poller task.
-* **Lifespan Pattern**:
+* **App Construction and Lifespan**: `serve()` creates the configured
+  `TelemetryRepository` and passes it to `build_app(config, repo)`. The lifespan,
+  Poller, and request handlers use that same instance.
   ```python
-  @asynccontextmanager
-  async def lifespan(app: FastAPI):
-      repo = TelemetryRepository(config.sqlite_path)
-      repo.init_db()
-      poller_task = asyncio.create_task(run_poller_task(config, repo))
-      yield
-      poller_task.cancel()
-      try:
-          await poller_task
-      except asyncio.CancelledError:
-          pass
+  def build_app(
+      config: AppConfig,
+      repo: TelemetryRepository,
+      *,
+      start_poller: bool = True,
+  ) -> FastAPI:
+      @asynccontextmanager
+      async def lifespan(app: FastAPI):
+          await repo.init_db()
+          poller_task: asyncio.Task[None] | None = None
+          if start_poller:
+              poller_task = asyncio.create_task(run_poller_task(config, repo))
+          try:
+              yield
+          finally:
+              if poller_task is not None:
+                  poller_task.cancel()
+                  try:
+                      await poller_task
+                  except asyncio.CancelledError:
+                      pass
+      return FastAPI(lifespan=lifespan)
   ```
 * **HTTP Endpoints**:
-  * `GET /`: Renders self-contained dark-mode dashboard HTML.
-  * `GET /api/latest`: Returns JSON dictionary of latest snapshots for all batteries.
-  * `GET /api/history?hours=24`: Returns time-series readings for charting.
+  * `GET /`: Renders self-contained dark-mode dashboard HTML. A configured
+    battery with no reading shows `No reading yet` without telemetry fields.
+  * `GET /api/latest`: Returns a JSON dictionary keyed by every configured
+    battery ID; batteries with no reading have a `null` value. Serialize
+    readings with `dataclasses.asdict` and preserve missing values as `None`.
+  * `GET /api/history?hours=24`: Returns time-series readings for historical
+    analysis as part of the Iteration 1 API. The visual graph UI that uses this
+    data is planned for Iteration 2.
 * **Offgrid-Ready UI Architecture**:
   * **100% Offline**: Zero external CDNs, zero web fonts, zero third-party script tags.
   * **Pure CSS Grid Theme**: Responsive multi-card layout with state-of-charge bars, color-coded charge/discharge metrics, cell voltage chips, and delta imbalance indicators.

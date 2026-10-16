@@ -6,7 +6,10 @@ Issues and specs are tracked as local markdown files under `.scratch/`. See `doc
 
 ### Triage labels
 
-Canonical triage roles mapped 1:1 (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`). See `docs/agents/triage-labels.md`.
+Triage roles go in a separate `Triage:` field from work lifecycle `Status:`
+(`open`, `claimed`, `resolved`). Roles map 1:1 (`needs-triage`, `needs-info`,
+`ready-for-agent`, `ready-for-human`, `wontfix`). See
+`docs/agents/triage-labels.md`.
 
 ### Domain docs
 

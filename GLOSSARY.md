@@ -17,7 +17,9 @@ A single point-in-time measurement snapshot from a Battery, including pack volta
 _Avoid_: Metrics, stats, data point, sample
 
 **Poller**:
-The background service or coroutine that connects to each Battery on a scheduled interval (default 30 seconds) to request Telemetry and persist it.
+The background coroutine that connects to each Battery sequentially to request
+and persist Telemetry, then waits the configured delay (default 30 seconds)
+before the next polling pass.
 _Avoid_: Collector, scraper, monitor worker
 
 **Discovery Script**:
@@ -25,5 +27,6 @@ A standalone interactive CLI utility used once to scan for BLE batteries, assign
 _Avoid_: Setup wizard, pairing agent, scanner
 
 **Dashboard**:
-The minimalist web interface served by FastAPI displaying current Battery status and historical charge/discharge graphs.
+The minimalist web interface served by FastAPI displaying current Battery
+status. Historical charge/discharge graphs are planned for Iteration 2.
 _Avoid_: Frontend, web portal, control panel

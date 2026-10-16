@@ -42,6 +42,8 @@ What is the exact interactive CLI flow and TOML schema for the Discovery Script 
    address = "AA:BB:CC:DD:EE:02"
    ```
 
+   `poll_interval_seconds` is the delay after a complete sequential polling pass.
+
 4. **Serialization & Overwrite**:
    - Zero-dependency serialization using a lightweight built-in string template/writer (reads handled by Python stdlib `tomllib`).
    - Writes only `address`. Readers prefer `address` and fall back to legacy `mac_address` for existing configs.

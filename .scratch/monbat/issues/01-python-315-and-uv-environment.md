@@ -17,4 +17,4 @@ The project uses Python 3.15 managed by `uv`, with Linux Mint as its primary dep
 3. **Run commands**: Use `uv run monbat discover` and `uv run pytest` so commands use the project environment without hardcoded interpreter or home-directory paths.
 4. **Limit**: Environment installation was confirmed on macOS ARM. Linux Mint remains the intended always-on host; live BLE hardware operation depends on adapter access and OS permissions and is not validated by dependency installation alone.
 
-Environment and platform notes: [01-python-313-and-uv.md](../../docs/research/01-python-313-and-uv.md).
+Environment and platform notes: [01-python-315-and-uv.md](../../docs/research/01-python-315-and-uv.md).

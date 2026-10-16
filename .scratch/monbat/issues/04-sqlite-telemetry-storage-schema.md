@@ -11,9 +11,9 @@ What exact SQLite table schema (columns for timestamp, battery ID, pack voltage,
 ## Answer
 
 1. **Concurrency & PRAGMAs**:
-   - `PRAGMA journal_mode = WAL;` (enables non-blocking concurrent reads while background poller writes).
-   - `PRAGMA synchronous = NORMAL;` (durable, high write performance).
-   - `PRAGMA busy_timeout = 5000;` (prevents lock exceptions during transient write contention).
+   - Set `PRAGMA journal_mode = WAL;` once during database initialization (enables concurrent reads while the background Poller writes).
+   - Set `PRAGMA synchronous = NORMAL;` on each connection.
+   - Set `PRAGMA busy_timeout = 5000;` on each connection.
 
 2. **Table Schema (`telemetry`)**:
    ```sql
@@ -32,6 +32,7 @@ What exact SQLite table schema (columns for timestamp, battery ID, pack voltage,
        cell_voltages_json TEXT NOT NULL
    );
    ```
+   - Persist `BatteryTelemetry.soc_percent` directly as provided. The repository does not recalculate or normalize it.
 
 3. **Indexing Strategy**:
    - Composite index for both latest-record lookups and time-series range queries:
@@ -42,12 +43,13 @@ What exact SQLite table schema (columns for timestamp, battery ID, pack voltage,
 
 4. **Encapsulation via `TelemetryRepository`**:
    - Encapsulated in a focused repository class (`TelemetryRepository` in `src/monbat/db.py`) using Python standard library `sqlite3`.
-   - Methods:
-     - `init_db() -> None`
-     - `save_telemetry(battery_id: str, telemetry: BatteryTelemetry) -> None`
-     - `get_latest_telemetry(battery_id: str) -> BatteryTelemetry | None`
-     - `get_history(battery_id: str, since_timestamp: float) -> list[BatteryTelemetry]`
-   - Async execution via `asyncio.to_thread` to keep the FastAPI event loop unblocked.
+   - Async methods:
+     - `async def init_db() -> None`
+     - `async def save_telemetry(battery_id: str, telemetry: BatteryTelemetry) -> None`
+     - `async def get_latest_telemetry(battery_id: str) -> BatteryTelemetry | None`
+     - `async def get_history(battery_id: str, since_timestamp: float) -> list[BatteryTelemetry]`
+   - Each method runs its complete synchronous `sqlite3` operation inside `asyncio.to_thread`.
+     The worker opens and closes its own connection, applying connection-specific PRAGMAs.
 
 5. **Retention Policy**:
    - Raw time-series records retained by default without automated purging or downsampling in Iteration 1 (~500 KB/day for 2 batteries polled every 30s). Purging and compaction deferred to future maintenance.

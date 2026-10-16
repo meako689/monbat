@@ -1,6 +1,6 @@
 # Python and `uv` environment on Linux and macOS
 
-- **Ticket**: 01 (`.scratch/monbat/issues/01-python-313-and-uv-environment.md`)
+- **Ticket**: 01 (`.scratch/monbat/issues/01-python-315-and-uv-environment.md`)
 - **Status**: Environment setup completed
 - **Date**: 2026-10-16
 
