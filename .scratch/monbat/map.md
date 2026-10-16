@@ -17,6 +17,7 @@ Technical architecture and implementation specification for `monbat`: an offgrid
 - **[03 Interactive BLE discovery CLI and TOML configuration schema](issues/03-discovery-cli-and-config-schema.md)**: Specified `monbat discover` CLI scan and alias flow, zero-dependency TOML serialization, and `config.toml` structure.
 - **[04 SQLite telemetry storage schema and connection management](issues/04-sqlite-telemetry-storage-schema.md)**: Established WAL mode, telemetry table schema with JSON cell voltages, `(battery_id, timestamp DESC)` indexing, and `TelemetryRepository` interface using stdlib `sqlite3`.
 - **[05 FastAPI dashboard endpoints and minimalist UI architecture](issues/05-dashboard-and-fastapi-service.md)**: Validated FastAPI lifespan poller lifecycle, responsive dark-mode dashboard cards, and 100% offline vanilla JS auto-refresh via executable prototype.
+- **[06 Implement discovery script](issues/06-implement-discovery-script.md)**: Implementation plan for `monbat discover` — files, module layout, async flow, TOML serializer, CLI wiring, and acceptance criteria.
 
 ## Not yet specified
 

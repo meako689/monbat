@@ -3,8 +3,8 @@ name = "monbat"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
-requires-python = ">=3.10"
-dependencies = []
+requires-python = ">=3.15"
+dependencies = ["bleak>=0.22"]
 
 [project.scripts]
 monbat = "monbat:main"
