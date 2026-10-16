@@ -13,6 +13,7 @@ from pathlib import Path
 
 from bleak import BleakScanner
 from bleak.backends.device import BLEDevice
+from bleak.backends.scanner import AdvertisementData
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -22,6 +23,9 @@ _SCAN_SECONDS: int = 10
 _FILTER_PREFIXES: tuple[str, ...] = ("Redodo", "LiTime", "BMS")
 _FFE0_UUID: str = "0000ffe0-0000-1000-8000-00805f9b34fb"
 _CONFIG_PATH: str = "config.toml"
+
+# Convenience alias for a (device, advertisement) pair
+_DeviceAdv = tuple[BLEDevice, AdvertisementData]
 
 # ---------------------------------------------------------------------------
 # Internal dataclass
@@ -40,27 +44,30 @@ class _SelectedBattery:
 # ---------------------------------------------------------------------------
 
 
-async def _scan() -> list[BLEDevice]:
+async def _scan() -> list[_DeviceAdv]:
+    """Scan for _SCAN_SECONDS and return (device, adv) pairs."""
     print(f"Scanning for BLE devices ({_SCAN_SECONDS} s)…")
-    devices: list[BLEDevice] = await BleakScanner.discover(timeout=_SCAN_SECONDS)
-    return devices
+    result: dict[str, tuple[BLEDevice, AdvertisementData]] = (
+        await BleakScanner.discover(timeout=_SCAN_SECONDS, return_adv=True)
+    )
+    return list(result.values())
 
 
-def _filter(devices: list[BLEDevice]) -> list[BLEDevice]:
-    """Return devices that advertise 0xFFE0 or match known name prefixes.
+def _filter(pairs: list[_DeviceAdv]) -> list[_DeviceAdv]:
+    """Return pairs advertising 0xFFE0 or matching known name prefixes.
 
     Falls back to the full list when nothing matches.
     """
     candidates = [
-        d
-        for d in devices
-        if _FFE0_UUID in (d.metadata.get("uuids") or [])
-        or (d.name or "").startswith(_FILTER_PREFIXES)
+        (device, adv)
+        for device, adv in pairs
+        if _FFE0_UUID in adv.service_uuids
+        or (device.name or adv.local_name or "").startswith(_FILTER_PREFIXES)
     ]
     if candidates:
         return candidates
     print("No filtered devices found — showing all discovered devices.")
-    return devices
+    return pairs
 
 
 # ---------------------------------------------------------------------------
@@ -68,19 +75,18 @@ def _filter(devices: list[BLEDevice]) -> list[BLEDevice]:
 # ---------------------------------------------------------------------------
 
 
-def _print_table(devices: list[BLEDevice]) -> None:
-    if not devices:
+def _print_table(pairs: list[_DeviceAdv]) -> None:
+    if not pairs:
         print("No devices found.")
         return
-    header = f"{'#':>3}  {'Name':<30}  {'MAC Address':<17}  {'RSSI':>6}"
+    header = f"{'#':>3}  {'Name':<30}  {'MAC Address':<17}  {'RSSI':>10}"
     print()
     print(header)
     print("-" * len(header))
-    for idx, device in enumerate(devices):
-        name = (device.name or "<unknown>")[:30]
-        rssi = device.rssi if device.rssi is not None else "n/a"
-        rssi_str = f"{rssi} dBm" if isinstance(rssi, int) else str(rssi)
-        print(f"{idx:>3}  {name:<30}  {device.address:<17}  {rssi_str:>6}")
+    for idx, (device, adv) in enumerate(pairs):
+        name = (device.name or adv.local_name or "<unknown>")[:30]
+        rssi_str = f"{adv.rssi} dBm"
+        print(f"{idx:>3}  {name:<30}  {device.address:<17}  {rssi_str:>10}")
     print()
 
 
@@ -89,7 +95,7 @@ def _print_table(devices: list[BLEDevice]) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _prompt_selections(devices: list[BLEDevice]) -> list[BLEDevice]:
+def _prompt_selections(pairs: list[_DeviceAdv]) -> list[_DeviceAdv]:
     """Ask the user to pick devices by index (comma-separated). Loops on bad input."""
     while True:
         raw = input("Enter device indices to add as batteries (e.g. 0,1): ").strip()
@@ -105,14 +111,14 @@ def _prompt_selections(devices: list[BLEDevice]) -> list[BLEDevice]:
                 valid = False
                 break
             n = int(part)
-            if n < 0 or n >= len(devices):
-                print(f"  Index {n} is out of range (0–{len(devices) - 1}).")
+            if n < 0 or n >= len(pairs):
+                print(f"  Index {n} is out of range (0–{len(pairs) - 1}).")
                 valid = False
                 break
             indices.append(n)
         if not valid:
             continue
-        return [devices[i] for i in indices]
+        return [pairs[i] for i in indices]
 
 
 def _prompt_alias(device: BLEDevice, position: int) -> tuple[str, str]:
@@ -178,19 +184,19 @@ def _write_config(toml_str: str, path: str = _CONFIG_PATH) -> None:
 
 
 async def run_discover() -> None:
-    all_devices = await _scan()
+    pairs = await _scan()
 
-    if not all_devices:
+    if not pairs:
         print("No BLE devices found. Make sure Bluetooth is enabled.")
         return
 
-    devices = _filter(all_devices)
-    _print_table(devices)
+    filtered = _filter(pairs)
+    _print_table(filtered)
 
-    selected = _prompt_selections(devices)
+    selected = _prompt_selections(filtered)
 
     batteries: list[_SelectedBattery] = []
-    for position, device in enumerate(selected, start=1):
+    for position, (device, _adv) in enumerate(selected, start=1):
         slug, friendly = _prompt_alias(device, position)
         batteries.append(
             _SelectedBattery(id=slug, name=friendly, mac_address=device.address)
