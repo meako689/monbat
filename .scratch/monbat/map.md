@@ -18,6 +18,9 @@ Technical architecture and implementation specification for `monbat`: an offgrid
 - **[04 SQLite telemetry storage schema and connection management](issues/04-sqlite-telemetry-storage-schema.md)**: Established WAL mode, telemetry table schema with JSON cell voltages, `(battery_id, timestamp DESC)` indexing, and `TelemetryRepository` interface using stdlib `sqlite3`.
 - **[05 FastAPI dashboard endpoints and minimalist UI architecture](issues/05-dashboard-and-fastapi-service.md)**: Validated FastAPI lifespan poller lifecycle, responsive dark-mode dashboard cards, and 100% offline vanilla JS auto-refresh via executable prototype.
 - **[06 Implement discovery script](issues/06-implement-discovery-script.md)**: Implementation plan for `monbat discover` — files, module layout, async flow, TOML serializer, CLI wiring, and acceptance criteria.
+- **[07 Implement Bleak BMS driver](issues/07-implement-bms-driver.md)**: Production `src/monbat/bms.py` — `BatteryTelemetry`, `parse_bms_payload()`, `poll_battery()`. Validated on live 8S Redodo packs (~26 V). 11/11 tests pass (9 offline + 2 live integration parametrised from `config.toml`).
+- **[08 Implement SQLite telemetry repository](issues/08-implement-sqlite-repository.md)**: `src/monbat/db.py` — `TelemetryRepository` with WAL mode, `asyncio.to_thread` queries, JSON cell voltages, and full unit test suite against in-memory SQLite. `ready-for-agent`.
+- **[09 Implement FastAPI app, Poller & Dashboard](issues/09-implement-fastapi-app-and-poller.md)**: `src/monbat/app.py` — FastAPI lifespan Poller, `/api/latest`, `/api/history`, self-contained dark-mode dashboard HTML, `__init__.py` `serve` wiring. `ready-for-agent`. Blocked by 08.
 
 ## Not yet specified
 
