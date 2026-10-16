@@ -1,6 +1,6 @@
 # monbat
 
-Home off-grid battery monitoring service for Linux Mint, tracking Redodo LiFePO4 batteries over Bluetooth Low Energy (BLE).
+Local off-grid battery monitoring service for Redodo LiFePO4 batteries over Bluetooth Low Energy (BLE). Linux Mint is the primary deployment target, and macOS is also supported through Bleak.
 
 ## Language
 

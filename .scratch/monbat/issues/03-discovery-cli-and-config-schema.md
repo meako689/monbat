@@ -17,7 +17,7 @@ What is the exact interactive CLI flow and TOML schema for the Discovery Script 
    - Runs a 10-second `BleakScanner` discovery pass.
    - Filters candidate devices advertising service `0xFFE0` or common battery naming prefixes ("Redodo", "LiTime", "BMS").
    - Falls back to showing all discovered BLE devices if no filtered devices are found.
-   - Displays a formatted console table: index, name, MAC address, and RSSI (dBm).
+   - Displays a formatted console table: index, name, Bleak device address, and RSSI (dBm). Address format varies by host OS.
    - Prompts the user to pick batteries by index and assign friendly names (e.g. "Battery 1", "Battery 2"), auto-generating slug IDs (`bat-1`, `bat-2`).
 
 3. **TOML Configuration Schema (`config.toml`)**:
@@ -34,14 +34,15 @@ What is the exact interactive CLI flow and TOML schema for the Discovery Script 
    [[batteries]]
    id = "bat-1"
    name = "Battery 1"
-   mac_address = "AA:BB:CC:DD:EE:01"
+   address = "AA:BB:CC:DD:EE:01"
 
    [[batteries]]
    id = "bat-2"
    name = "Battery 2"
-   mac_address = "AA:BB:CC:DD:EE:02"
+   address = "AA:BB:CC:DD:EE:02"
    ```
 
 4. **Serialization & Overwrite**:
    - Zero-dependency serialization using a lightweight built-in string template/writer (reads handled by Python stdlib `tomllib`).
+   - Writes only `address`. Readers prefer `address` and fall back to legacy `mac_address` for existing configs.
    - If `config.toml` already exists, confirms before overwriting.

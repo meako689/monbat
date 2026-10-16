@@ -55,7 +55,7 @@ discover.py
 │
 ├── _scan() -> list[BLEDevice]          # async: BleakScanner, 10 s
 ├── _filter(devices) -> list[BLEDevice] # filter by service UUID or name prefix; fallback all
-├── _print_table(devices) -> None       # numbered table: #, name, MAC, RSSI
+├── _print_table(devices) -> None       # numbered table: #, name, BLE address, RSSI
 ├── _prompt_selections(devices) -> list[BLEDevice]  # input loop: pick indices
 ├── _prompt_alias(device, idx) -> tuple[str, str]   # name → id slug (bat-<n>)
 ├── _serialize_config(batteries, *, path) -> str    # pure TOML string builder, no deps
@@ -83,7 +83,7 @@ from dataclasses import dataclass
 class _SelectedBattery:
     id: str
     name: str
-    mac_address: str
+    address: str
 ```
 
 Used only internally in `discover.py`; not exported.

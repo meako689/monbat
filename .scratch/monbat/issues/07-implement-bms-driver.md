@@ -51,7 +51,7 @@ from `config.toml`.
 - `test_parse_too_short` — asserts `ValueError` on short buffer.
 - `test_parse_discharge_negative_current` — verifies signed current and negative power.
 - `test_parse_soc_zero_capacity` — verifies SOC is 0.0 when capacity == 0.
-- `test_live_bat1` / `test_live_bat2` — `pytest.mark.integration`, reads MACs
+- `test_live_bat1` / `test_live_bat2` — `pytest.mark.integration`, reads Bleak device addresses
   from `config.toml` via `tomllib`, calls `asyncio.run(poll_battery(...))`.
   Skipped with `pytest.skip` if Bluetooth is unavailable.
 
@@ -74,7 +74,7 @@ Implemented in:
   `parse_bms_payload()` pure parser, `poll_battery()` async BleakClient single-poll.
   No simulation helpers; `bleak` imported only inside `poll_battery()`.
 - `tests/test_bms.py` — 9 offline unit tests + 2 live integration tests
-  parametrised from `config.toml` MACs. Mark `integration` registered in
+  parametrised from `config.toml` device addresses. Mark `integration` registered in
   `pyproject.toml`.
 
 Live results from real hardware (16-10-2026):

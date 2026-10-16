@@ -2,7 +2,7 @@
 
 ## 1. Executive Summary & Purpose
 
-`monbat` is a lightweight, local battery monitoring service designed to run on a Linux Mint laptop to monitor a home offgrid power bank composed of two (2) Bluetooth-enabled Redodo LiFePO4 batteries.
+`monbat` is a lightweight, local battery monitoring service for a home offgrid power bank composed of two (2) Bluetooth-enabled Redodo LiFePO4 batteries. Linux Mint is the primary deployment target; macOS is also supported for development and operation through Bleak's CoreBluetooth backend. Both platforms require a compatible BLE adapter and operating-system permissions.
 
 The system connects over Bluetooth Low Energy (BLE), queries real-time battery management system (BMS) telemetry every 30 seconds (configurable), stores time-series readings in a local SQLite database in Write-Ahead Logging (WAL) mode, and serves an offgrid-ready, zero-dependency web dashboard via FastAPI.
 
@@ -10,7 +10,8 @@ The system connects over Bluetooth Low Energy (BLE), queries real-time battery m
 
 ## 2. Platform & Toolchain Standards
 
-* **Operating System**: Linux Mint 21.3+ (Ubuntu 22.04 LTS / glibc 2.35, BlueZ 5.64).
+* **Primary Operating System**: Linux Mint 21.3+ (Ubuntu 22.04 LTS / glibc 2.35, BlueZ 5.64).
+* **Also Supported**: macOS through Bleak's CoreBluetooth backend. BLE adapter access and permissions are managed by the host OS; live hardware operation must be confirmed on each host.
 * **Python Runtime**: **Python 3.15** managed cleanly in user-space via Astral's `uv` standalone CPython.
 * **Package Management**: `uv` (`pyproject.toml` with `requires-python = ">=3.15"`).
 * **Coding Standards**:
@@ -59,12 +60,12 @@ Domain language follows the project [GLOSSARY.md](../../GLOSSARY.md):
   [[batteries]]
   id = "bat-1"
   name = "Battery 1 (Upper)"
-  mac_address = "AA:BB:CC:11:22:33"
+  address = "AA:BB:CC:11:22:33" # Bleak device address; format depends on host OS
 
   [[batteries]]
   id = "bat-2"
   name = "Battery 2 (Lower)"
-  mac_address = "AA:BB:CC:44:55:66"
+  address = "AA:BB:CC:44:55:66"
   ```
 * **Parsing & Writing**:
   * Read via Python standard library `tomllib`.
@@ -83,7 +84,7 @@ Domain language follows the project [GLOSSARY.md](../../GLOSSARY.md):
 
 * **Polling Lifecycle**:
   1. Sequential poll-and-disconnect: Connects to Battery 1, registers notifications on `TX`, writes 8-byte request to `RX`, awaits 66-byte payload, unregisters notifications, and disconnects. Repeats for Battery 2.
-  2. Protects against Linux BlueZ adapter lockups and multi-connection limits.
+  2. Avoids adapter issues that can occur with concurrent connections; on Linux this also avoids BlueZ adapter lockups and connection limits.
   3. Chunk buffer: Gathers notification chunks into a `bytearray` to guard against BLE MTU fragmentation.
 
 * **Payload Layout (Little-Endian `<`)**:
@@ -190,4 +191,4 @@ Domain language follows the project [GLOSSARY.md](../../GLOSSARY.md):
 3. **Iteration 3 (Bank Aggregation & Alerts)**:
    * Combined battery bank power, aggregate SOC, and net current calculations.
    * System health alerts (low cell voltage, high temperature cutoffs).
-   * Systemd user service packaging (`monbat.service`).
+   * Linux systemd user service packaging (`monbat.service`).

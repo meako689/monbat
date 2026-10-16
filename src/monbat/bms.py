@@ -91,7 +91,8 @@ async def poll_battery(address: str, timeout_sec: float = 10.0) -> BatteryTeleme
     stop_notify → disconnect cycle.
 
     Args:
-        address:     Bluetooth MAC address of the battery BMS.
+        address:     Bleak device address for the battery BMS. Its format depends
+                     on the platform (for example, a MAC address or UUID).
         timeout_sec: Seconds to wait for both connection and notification.
 
     Returns:

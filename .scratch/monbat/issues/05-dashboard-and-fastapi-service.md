@@ -24,7 +24,7 @@ Validated through prototype [prototype_dashboard.py](../../src/monbat/prototype_
 3. **100% Offline-Ready Minimalist UI**:
    - Zero external CDN dependencies (fonts, frameworks, or scripts) ensuring complete offline usability on the offgrid Linux laptop.
    - Self-contained modern CSS grid & dark theme (< 120 lines):
-     - Responsive cards per battery (battery name, MAC, status badge: `charging` / `discharging` / `offline`).
+     - Responsive cards per battery (battery name, Bleak device address, status badge: `charging` / `discharging` / `offline`).
      - Dynamic SOC percentage with color-coded progress fill bar.
      - Key metrics grid: Voltage (V), Current (A, signed with charge/discharge colors), Power (W), Remaining & Total Capacity (Ah), Cell & BMS temperatures (°C).
      - Cell voltages block: individual cell voltages (e.g. `C1: 3.325V`, etc.) and cell delta ($\Delta V$).

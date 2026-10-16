@@ -21,7 +21,7 @@ from typing import Any
 class BatteryConfig:
     id: str
     name: str
-    mac_address: str
+    address: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,7 +43,7 @@ class BatteryState:
 # Sample mock data simulating 2 Redodo LiFePO4 batteries
 MOCK_BATTERIES: dict[str, BatteryState] = {
     "bat-1": BatteryState(
-        config=BatteryConfig(id="bat-1", name="Redodo 100Ah (Bank 1)", mac_address="AA:BB:CC:11:22:33"),
+        config=BatteryConfig(id="bat-1", name="Redodo 100Ah (Bank 1)", address="AA:BB:CC:11:22:33"),
         voltage_v=13.310,
         current_a=14.250,
         power_w=189.67,
@@ -57,7 +57,7 @@ MOCK_BATTERIES: dict[str, BatteryState] = {
         status="charging",
     ),
     "bat-2": BatteryState(
-        config=BatteryConfig(id="bat-2", name="Redodo 100Ah (Bank 2)", mac_address="AA:BB:CC:44:55:66"),
+        config=BatteryConfig(id="bat-2", name="Redodo 100Ah (Bank 2)", address="AA:BB:CC:44:55:66"),
         voltage_v=13.295,
         current_a=14.180,
         power_w=188.52,
@@ -138,7 +138,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       align-items: baseline;
     }
     .card-title { font-size: 1.15rem; font-weight: 600; }
-    .mac-sub { font-size: 0.75rem; color: var(--text-muted); font-family: monospace; }
+    .address-sub { font-size: 0.75rem; color: var(--text-muted); font-family: monospace; }
     .badge {
       font-size: 0.75rem;
       padding: 0.2rem 0.5rem;
@@ -234,7 +234,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             <div class="card-header">
               <div>
                 <div class="card-title">${b.config.name}</div>
-                <div class="mac-sub">${b.config.mac_address}</div>
+                <div class="address-sub">${b.config.address}</div>
               </div>
               <span class="badge ${b.status}">${b.status}</span>
             </div>

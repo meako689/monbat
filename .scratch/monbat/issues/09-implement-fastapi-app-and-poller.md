@@ -45,7 +45,7 @@ Module layout (top-to-bottom):
 app.py
 ├── _load_config(path: str) -> AppConfig         # reads config.toml via tomllib
 ├── AppConfig (frozen dataclass)                  # poller + server + batteries
-├── BatteryConfig (frozen dataclass)              # id, name, mac_address
+├── BatteryConfig (frozen dataclass)              # id, name, address (Bleak identifier)
 ├── run_poller_task(config, repo) -> None         # async infinite loop
 ├── build_app(config, repo) -> FastAPI            # factory used by tests + main
 ├── lifespan(app)                                 # @asynccontextmanager, starts Poller
@@ -54,6 +54,12 @@ app.py
 └── GET /api/history?hours=24                     # JSON list of time-series rows
 ```
 
+#### Config compatibility
+
+At the config parsing boundary, normalize each battery identifier by preferring
+`address` and falling back to legacy `mac_address`. Store only the normalized
+value in `BatteryConfig.address`.
+
 #### Poller coroutine (`run_poller_task`)
 
 ```python
@@ -61,7 +67,7 @@ async def run_poller_task(config: AppConfig, repo: TelemetryRepository) -> None:
     while True:
         for bat in config.batteries:
             try:
-                t = await poll_battery(bat.mac_address, config.poller.timeout_seconds)
+                t = await poll_battery(bat.address, config.poller.timeout_seconds)
                 await repo.save_telemetry(bat.id, t)
             except Exception as exc:
                 # log warning, continue to next battery

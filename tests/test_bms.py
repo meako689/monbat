@@ -15,6 +15,8 @@ import tomllib
 from pathlib import Path
 
 import pytest
+from bleak import BleakScanner
+from bleak.exc import BleakError
 
 from monbat.bms import BatteryTelemetry, MIN_PAYLOAD_LEN, parse_bms_payload, poll_battery
 
@@ -44,14 +46,17 @@ def _build_payload(
     return bytes(buf)
 
 
-def _load_battery_macs() -> list[str]:
-    """Read MAC addresses from config.toml in the repo root."""
+def _load_battery_addresses() -> list[str]:
+    """Read Bleak device addresses from config.toml in the repo root."""
     config_path = Path(__file__).parent.parent / "config.toml"
     if not config_path.exists():
         return []
     with config_path.open("rb") as fh:
         cfg = tomllib.load(fh)
-    return [b["mac_address"] for b in cfg.get("batteries", [])]
+    return [
+        battery.get("address", battery.get("mac_address", ""))
+        for battery in cfg.get("batteries", [])
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -144,30 +149,26 @@ class TestLiveBatteries:
     """Requires physical Bluetooth adapter + batteries listed in config.toml."""
 
     def _skip_if_no_bluetooth(self) -> None:
-        """Skip the test if the BlueZ adapter is unavailable."""
-        import subprocess
-        result = subprocess.run(
-            ["bluetoothctl", "show"],
-            capture_output=True,
-            text=True,
-        )
-        if "No default controller available" in result.stdout or result.returncode != 0:
-            pytest.skip("No Bluetooth adapter available")
+        """Skip the test if Bleak cannot access a Bluetooth adapter."""
+        try:
+            asyncio.run(BleakScanner.discover(timeout=1.0))
+        except (BleakError, OSError) as exc:
+            pytest.skip(f"Bluetooth adapter unavailable: {exc}")
 
     @pytest.fixture(autouse=True)
     def check_bt(self) -> None:
         self._skip_if_no_bluetooth()
 
-    def _poll(self, mac: str) -> BatteryTelemetry:
-        return asyncio.run(poll_battery(mac, timeout_sec=15.0))
+    def _poll(self, address: str) -> BatteryTelemetry:
+        return asyncio.run(poll_battery(address, timeout_sec=15.0))
 
-    @pytest.mark.parametrize("mac", _load_battery_macs())
-    def test_live_poll(self, mac: str) -> None:
+    @pytest.mark.parametrize("address", _load_battery_addresses())
+    def test_live_poll(self, address: str) -> None:
         """Poll each battery from config.toml and assert telemetry is sane."""
-        if not mac:
+        if not address:
             pytest.skip("No batteries configured in config.toml")
 
-        t = self._poll(mac)
+        t = self._poll(address)
 
         # Sanity bounds for a healthy LiFePO4 pack
         # 8S LiFePO4 pack: ~21–29 V; allow 8–32 V to cover any S configuration
@@ -182,5 +183,5 @@ class TestLiveBatteries:
         assert -60 <= t.cell_temp_c <= 60, f"Cell temp out of range: {t.cell_temp_c} °C"
         assert -60 <= t.bms_temp_c <= 60, f"BMS temp out of range: {t.bms_temp_c} °C"
 
-        print(f"\n[{mac}] {t.voltage_v} V | {t.current_a} A | {t.soc_percent} % SOC")
+        print(f"\n[{address}] {t.voltage_v} V | {t.current_a} A | {t.soc_percent} % SOC")
         print(f"  cells={t.cell_voltages_v}  T_cell={t.cell_temp_c}°C  T_bms={t.bms_temp_c}°C")

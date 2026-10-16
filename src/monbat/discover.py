@@ -36,7 +36,7 @@ _DeviceAdv = tuple[BLEDevice, AdvertisementData]
 class _SelectedBattery:
     id: str
     name: str
-    mac_address: str
+    address: str
 
 
 # ---------------------------------------------------------------------------
@@ -79,14 +79,14 @@ def _print_table(pairs: list[_DeviceAdv]) -> None:
     if not pairs:
         print("No devices found.")
         return
-    header = f"{'#':>3}  {'Name':<30}  {'MAC Address':<17}  {'RSSI':>10}"
+    header = f"{'#':>3}  {'Name':<30}  {'Address':<36}  {'RSSI':>10}"
     print()
     print(header)
     print("-" * len(header))
     for idx, (device, adv) in enumerate(pairs):
         name = (device.name or adv.local_name or "<unknown>")[:30]
         rssi_str = f"{adv.rssi} dBm"
-        print(f"{idx:>3}  {name:<30}  {device.address:<17}  {rssi_str:>10}")
+        print(f"{idx:>3}  {name:<30}  {device.address:<36}  {rssi_str:>10}")
     print()
 
 
@@ -154,7 +154,7 @@ def _serialize_config(batteries: list[_SelectedBattery]) -> str:
             "[[batteries]]",
             f'id = "{bat.id}"',
             f'name = "{bat.name}"',
-            f'mac_address = "{bat.mac_address}"',
+            f'address = "{bat.address}"',
             "",
         ]
     return "\n".join(lines)
@@ -199,7 +199,7 @@ async def run_discover() -> None:
     for position, (device, _adv) in enumerate(selected, start=1):
         slug, friendly = _prompt_alias(device, position)
         batteries.append(
-            _SelectedBattery(id=slug, name=friendly, mac_address=device.address)
+            _SelectedBattery(id=slug, name=friendly, address=device.address)
         )
 
     toml_str = _serialize_config(batteries)

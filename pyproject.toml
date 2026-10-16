@@ -1,7 +1,7 @@
 [project]
 name = "monbat"
 version = "0.1.0"
-description = "Add your description here"
+description = "Local BLE battery telemetry monitor"
 readme = "README.md"
 requires-python = ">=3.15"
 dependencies = ["bleak>=0.22"]

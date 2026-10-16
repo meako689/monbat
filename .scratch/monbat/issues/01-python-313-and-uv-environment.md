@@ -1,4 +1,4 @@
-# 01 Python 3.13 and uv environment compatibility on Linux Mint
+# 01 Python and uv environment on Linux and macOS
 
 Type: research
 Status: resolved
@@ -6,13 +6,15 @@ Blocked by:
 
 ## Question
 
-Can `monbat` upgrade from Python 3.10 to Python 3.13 on this Linux Mint system, how should `uv` be installed and invoked, and are the core target dependencies (`bleak`, `fastapi`, `uvicorn`, `jinja2`) fully compatible and installable on Python 3.13 on Linux?
+How should `uv` provision the project's Python environment, and can the current BLE application run on the Linux Mint deployment host and macOS development hosts?
 
 ## Answer
 
-Yes, `monbat` will adopt Python 3.15 via `uv`:
-1. **Python 3.15 via `uv`**: Python 3.15 is supported natively by Astral's `uv` toolchain via standalone CPython builds running in user space (`~/.local/share/uv/python/`), requiring glibc >= 2.17 which Linux Mint 21.3 (glibc 2.35) satisfies.
-2. **`uv` installation and invocation**: `uv` will be installed to `/home/tira/.local/bin` via `curl -LsSf https://astral.sh/uv/install.sh | sh`. Setting `requires-python = ">=3.15"` in `pyproject.toml` enables `uv sync` and `uv run` to provision and manage Python 3.15 automatically.
-3. **Core target dependencies**: Core libraries (`bleak`, `fastapi`, `uvicorn`, `jinja2`) and BlueZ 5.64 run cleanly, with native standard library capabilities (`tomllib`, `asyncio.TaskGroup`, and Python 3.15 runtime features).
+The project uses Python 3.15 managed by `uv`, with Linux Mint as its primary deployment target and macOS supported for development and operation.
 
-Detailed research report: [01-python-313-and-uv.md](../../docs/research/01-python-313-and-uv.md).
+1. **Environment setup**: Run `uv sync` from the repository root. It creates `.venv`, selects a compatible CPython, and installs dependencies for the current OS and architecture. On the macOS ARM host used for this setup, it installed CPython 3.15.0b3, Bleak 3.0.2, and pytest 9.1.1.
+2. **Platform support**: Bleak uses BlueZ on Linux and CoreBluetooth on macOS. Package installation is platform-aware; the lockfile contains OS-specific optional backend dependencies. New configs use Bleak's device identifier as `address`; readers accept the legacy `mac_address` key for existing configs.
+3. **Run commands**: Use `uv run monbat discover` and `uv run pytest` so commands use the project environment without hardcoded interpreter or home-directory paths.
+4. **Limit**: Environment installation was confirmed on macOS ARM. Linux Mint remains the intended always-on host; live BLE hardware operation depends on adapter access and OS permissions and is not validated by dependency installation alone.
+
+Environment and platform notes: [01-python-313-and-uv.md](../../docs/research/01-python-313-and-uv.md).
