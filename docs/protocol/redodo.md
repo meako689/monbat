@@ -1,5 +1,13 @@
 # Redodo BMS protocol
 
+For framing, the full status layout, commands, captures, and conflicting
+reference interpretations, read the [local wire-protocol specification](redodo-wire-spec.md).
+This page describes the current Monbat implementation.
+
+The wire spec derives authority from pinned external sources. Current Monbat
+behavior is descriptive here and does not override that contract. Planned
+conformance work is in [tickets 21–25](../../.scratch/monbat/map.md#protocol-reimplementation).
+
 The driver uses the read-only `0x13` status request over GATT service `FFE0`,
 notifications `FFE1`, and writes `FFE2`. It uses shared discovery and configurable request concurrency. During active
 Dashboard collection it can retain connections and notification subscriptions;
@@ -25,7 +33,8 @@ Active protections cover overcharge, over-discharge, charge/discharge
 overcurrent, high/low temperature, and short circuit. Unknown protection bits
 and BMS states remain explicit. Reading freshness and communication failures
 are separate from BMS-reported protection state. No separate balancing-state
-field is established.
+field is decoded by Monbat today. External references describe balancing and
+additional raw regions; their preservation and qualified presentation are planned.
 
 ## Reference and validation
 

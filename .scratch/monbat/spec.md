@@ -94,103 +94,44 @@ Domain language follows the project [GLOSSARY.md](../../GLOSSARY.md):
 
 ### 4.2 BLE BMS Protocol & Driver (`src/monbat/bms.py`)
 
-* **GATT Protocol**:
-  * Service UUID: `0000ffe0-0000-1000-8000-00805f9b34fb` (or short `"ffe0"`)
-  * TX Characteristic (Notify): `0000ffe1-0000-1000-8000-00805f9b34fb` (or short `"ffe1"`)
-  * RX Characteristic (Write without response): `0000ffe2-0000-1000-8000-00805f9b34fb` (or short `"ffe2"`)
-  * Request packet: `bytes([0x00, 0x00, 0x04, 0x01, 0x13, 0x55, 0xAA, 0x17])` (8 bytes)
+The [external-source wire specification](../../docs/protocol/redodo-wire-spec.md)
+is authoritative for protocol framing, widths, fields, and evidence limits.
+Its pinned GitHub sources take precedence over current Monbat code and prior
+implementation tickets. The [source comparison](../../docs/research/redodo-protocol-sources.md)
+records unresolved disagreements; current behavior does not resolve them.
 
-* **Polling Lifecycle**:
-  1. Sequential poll-and-disconnect: Connect, register notifications, send the
-     existing status request, await a complete framed response, unregister,
-     and disconnect. Repeat for each Battery.
-  2. Avoids adapter issues that can occur with concurrent connections; on Linux this also avoids BlueZ adapter lockups and connection limits.
-  3. Gather chunks into a bounded buffer (512 bytes). Find the response marker
-     `01 93 55 AA` at frame offset 3 and realign past stale prefix bytes. The
-     unsigned length byte at offset 2 gives total frame size as `length + 4`;
-     upstream's `0x65` capture is 105 bytes. Complete only at the declared size.
-     Validate identity, field coverage, length, and checksum; derive response
-     checksum behavior from the pinned fixture rather than assuming it matches
-     command framing. Reject malformed frames without replacing good Telemetry.
+Reimplementation is planned in [tickets 21–25](map.md#protocol-reimplementation).
+The [implementation handoff](../../docs/protocol/implementation-handoff.md)
+fixes typed field names, API/schema representations, file touchpoints, and
+validation for the confirmed scope.
+After grilling, the approved target adds balancing cell slots, all five
+temperature slots, and the complete problem/failure region. Preserve original
+cell-slot numbers throughout typed readings, storage, APIs, and Dashboard.
+Persist useful fields and each complete validated BLE response in a fresh
+database; do not migrate historical rows. Store the exact realigned declared
+frame, including checksum and unknown bytes, as a BLOB alongside its Telemetry
+row. History output includes response hex for later retrieval; latest/SSE and
+Dashboard use typed fields without repeatedly transmitting full responses. Expose balancing and extra temperatures in Battery
+details, keep named protections prominent, and show unknown failure data
+as hex. Balancing remains a reference-derived interpretation.
 
-* **Payload Layout (Little-Endian `<`)**:
-  * Byte 12 (`<H`): Pack voltage (mV / 1000.0)
-  * Bytes 16..47 (`<16H`): Up to 16 individual cell voltages (mV / 1000.0; non-zero entries kept)
-  * Byte 48 (`<i`): Net current (mA / 1000.0; positive = charge, negative = discharge)
-  * Byte 52 (`<h`): Cell temperature (°C)
-  * Byte 54 (`<h`): BMS internal temperature (°C)
-  * Byte 62 (`<H`): Remaining capacity (centi-Ah / 100.0)
-  * Byte 64 (`<I`): Full charge capacity (centi-Ah / 100.0)
-  * Byte 76 (`<I`): Protection bitmask used by the reference decoder. Its prose
-    describes an 8-byte protection region; semantics of bytes 80–83 are unknown.
-  * Byte 88 (`<H`): Raw BMS state: 0 idle, 1 charging, 2 discharging, 4 disabled;
-    other values remain explicitly unknown.
-  * Byte 90 (`<H`): Reported SOC (%)
-  * Byte 92 (`<I`): SOH (%)
-  * Byte 96 (`<I`): Cycle count
+Keep the exact read-only 0x13 query and current ATT write mode unchanged.
+Defer heater/control interpretation, second voltage, balance memory, and
+discharged-capacity count. Charge/discharge controls are Phase3 roadmap work
+in ticket24; they are not authorized for current implementation or execution.
 
-* **Protection masks**:
+Application policies remain separate from the wire protocol: valid reported
+SOC takes precedence, capacity-derived SOC is the bounded fallback, SOH is
+nullable outside 0–100, power retains current sign, and freshness/scheduling
+follow section 4.4 and operational docs. Existing policy is not evidence for
+manufacturer sentinel values. Tickets 21–23 define implementation changes;
+ticket 25 retains unresolved semantic questions until external evidence exists.
 
-  | Mask | Active protection |
-  |---|---|
-  | `0x00000004` | Overcharge |
-  | `0x00000020` | Over-discharge |
-  | `0x00000040` | Charging overcurrent |
-  | `0x00000080` | Discharging overcurrent |
-  | `0x00000100` | High temperature while charging |
-  | `0x00000200` | High temperature while discharging |
-  | `0x00000400` | Low temperature while charging |
-  | `0x00000800` | Low temperature while discharging |
-  | `0x00004000` | Short circuit |
+The earlier ticket 13 balancing exclusion applied to that implementation's
+scope. The user's 2026-10-17 request for external-source conformance now
+includes preservation of externally documented balancing regions; physical
+semantics remain qualified. Historical completed tickets remain historical.
 
-  Preserve the raw mask and display unknown set bits as unknown protections.
-  These are BMS-reported active states, distinct from communication errors or
-  locally calculated threshold alerts. No separate balancing state is established.
-
-* **Telemetry Dataclass**:
-  ```python
-  @dataclass(frozen=True, slots=True)
-  class BatteryTelemetry:
-      timestamp: float
-      voltage_v: float
-      current_a: float
-      power_w: float
-      soc_percent: float
-      remaining_ah: float
-      capacity_ah: float
-      cell_temp_c: int
-      bms_temp_c: int
-      cell_voltages_v: tuple[float, ...]
-      reported_soc_percent: float | None
-      soc_source: Literal["bms", "capacity"]
-      soh_percent: float | None
-      cycle_count: int
-      bms_state_raw: int
-      bms_state: Literal["idle", "charging", "discharging", "disabled", "unknown"]
-      protection_flags: int
-      active_protections: tuple[str, ...]
-  ```
-
-  `soc_percent` uses valid reported SOC (0–100 inclusive), including 0%.
-  When unavailable, use the existing bounded remaining/full-capacity
-  calculation and set `soc_source="capacity"`. Record unavailable reported SOC
-  or SOH as null; an invalid frame is a failed poll, not a fallback reading.
-  Keep signed `power_w = voltage_v * current_a`.
-
-* **Protocol sources**, pinned to upstream commit
-  `4534382d00702e14199e2a2aaab50180cf0878ac`:
-  * [Protocol notes](https://github.com/mkeguy106/bmsmon/blob/4534382d00702e14199e2a2aaab50180cf0878ac/CLAUDE.md)
-  * [Current decoder](https://github.com/mkeguy106/bmsmon/blob/4534382d00702e14199e2a2aaab50180cf0878ac/android/app/src/main/java/dev/joely/bmsmon/ble/BmsProtocol.kt)
-  * [Field layout](https://github.com/mkeguy106/bmsmon/blob/4534382d00702e14199e2a2aaab50180cf0878ac/android/app/src/main/java/dev/joely/bmsmon/ble/profile/BatteryProfile.kt)
-  * [Captured response and cases](https://github.com/mkeguy106/bmsmon/blob/4534382d00702e14199e2a2aaab50180cf0878ac/android/app/src/test/java/dev/joely/bmsmon/BmsProtocolTest.kt)
-
-  Prefer the current decoder over upstream's legacy CLI. Its fixture covers a
-  12 V/4S Battery; our driver must support the existing 24 V/8S Batteries.
-  This task uses the existing status command; no new commands or connection
-  architecture are needed. Historical parser compatibility and balancing
-  research are outside the approved scope.
-
----
 
 ### 4.3 SQLite Telemetry Storage (`src/monbat/db.py`)
 

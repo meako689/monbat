@@ -12,6 +12,13 @@ Technical architecture and implementation specification for `monbat`: an offgrid
 
 ## Decisions so far
 
+- **[20 Local comprehensive protocol specification](issues/20-local-protocol-spec.md)**:
+  Resolved: [wire spec](../../docs/protocol/redodo-wire-spec.md) and
+  [source comparison](../../docs/research/redodo-protocol-sources.md) cover
+  five pinned implementations, framing, fields, commands, captures, conflicts,
+  and unknowns. Capture length/checksum and local links verified. Disabled
+  matches bmsmon; calledit describes charge disabled on studied LiTime Batteries.
+
 - **[01 Python and uv environment](issues/01-python-315-and-uv-environment.md)**: Project requires Python 3.15 and uses `uv`; `uv sync` created the macOS ARM environment. Linux remains the primary deployment, with macOS support through Bleak and opaque platform-specific device addresses.
 - **[02 Redodo BMS BLE protocol and bleak driver design](issues/02-ble-protocol-and-bms-driver.md)**: Validated little-endian 66-byte packet parsing (`<I`, `<16H`, `<i`, `<h`, `<h`, `<H`, `<H`) and BleakClient single-poll connect-notify-write-disconnect cycle via executable prototype.
 - **[03 Interactive BLE discovery CLI and TOML configuration schema](issues/03-discovery-cli-and-config-schema.md)**: Specified `monbat discover` CLI scan and alias flow, zero-dependency TOML serialization, and `config.toml` structure.
@@ -72,8 +79,43 @@ the approved behavior; implementation is still pending.
 - Cloud synchronization, remote MQTT brokers, or Home Assistant integration (ruled out: strictly local personal service).
 - Inverter or Solar Charge Controller (MPPT) communication (ruled out: strictly Redodo battery BMS).
 - BMS parameter writing, cell balancing overrides, or firmware modifications (ruled out: strictly read-only telemetry monitoring).
-- Balancing-state research or reverse-engineering follow-up (explicitly omitted
-  on 2026-10-17; the reviewed decoder provides no separate balancing state).
+- Earlier ticket 13 omitted balancing. The later external-source protocol
+  request supersedes that exclusion for preserving and qualifying the
+  externally documented status regions; controls remain out of scope.
+
+## Protocol reimplementation
+
+Start with the [implementation handoff](../../docs/protocol/implementation-handoff.md).
+It contains the final contracts, current-code touchpoints, and validation plan.
+
+The [wire spec](../../docs/protocol/redodo-wire-spec.md) derives authority from
+pinned external documentation and reference implementations. Monbat's current
+code and earlier completed tasks do not define protocol facts.
+
+| Ticket | Work | Readiness | Dependencies |
+|---|---|---|---|
+| [21](issues/21-preserve-complete-status-regions.md) | Decode balancing, temperatures, full problem region, original cell slots | ready-for-agent | None |
+| [22](issues/22-round-trip-protocol-evidence.md) | Useful fields and complete-response BLOBs in a fresh database | ready-for-agent | 21 |
+| [23](issues/23-display-protocol-fields-without-overclaiming.md) | Qualified balancing/temperature details, unknown failure data, slot numbering | ready-for-agent | 22 |
+| [24](issues/24-phase-3-charge-discharge-controls.md) | Phase3 charge/discharge control investigation | needs-triage | Future phase |
+| [25](issues/25-resolve-external-protocol-disagreements.md) | Resolve disputed physical meanings with external evidence | needs-info | Does not block21–23 |
+
+Grilling confirmed by the user on 2026-10-17. Tickets21–23 are open and
+implementation has not started. The user subsequently revised the storage
+choice: preserve complete validated BLE responses as SQLite BLOBs alongside
+useful typed fields, with history hex retrieval. Start fresh without deleting
+or migrating old databases. Keep
+read-only status polling and current ATT mode unchanged. B1 governs the
+Redodo baseline; other sources fill gaps and identify unresolved disagreements.
+
+## Phase 3 roadmap
+
+Investigate charge/discharge switches in [ticket24](issues/24-phase-3-charge-discharge-controls.md).
+Establish verified commands, readback behavior, and per-action confirmation
+before implementation. Shutdown, configuration writes, and firmware changes
+remain outside the initial scope. Current roadmap approval does not authorize
+sending controls to Batteries.
+
 
 ## Update speed tasks — 2026-10-17
 
