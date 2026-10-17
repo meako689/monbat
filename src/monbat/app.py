@@ -299,14 +299,13 @@ _DASHBOARD_HTML = """<!DOCTYPE html>
 
     function renderBattery(view) {
       const label = statusLabels[view.status] || view.status;
+      const header = `
+        <div class="card-header">
+          <div><div class="card-title">${escapeText(view.name)}</div><div class="address">${escapeText(view.address)}</div></div>
+          <span class="badge ${view.status}">${label}</span>
+        </div>`;
       if (view.telemetry === null) {
-        return `
-          <article class="card">
-            <div class="card-header">
-              <div><div class="card-title">${view.name}</div><div class="address">${view.address}</div></div>
-              <span class="badge ${view.status}">${label}</span>
-            </div>
-          </article>`;
+        return `<article class="card">${header}</article>`;
       }
 
       const telemetry = view.telemetry;
@@ -328,10 +327,7 @@ _DASHBOARD_HTML = """<!DOCTYPE html>
 
       return `
         <article class="card">
-          <div class="card-header">
-            <div><div class="card-title">${view.name}</div><div class="address">${view.address}</div></div>
-            <span class="badge ${view.status}">${label}</span>
-          </div>
+          ${header}
           <div class="bms-state">BMS state: ${escapeText(bmsLabel)}</div>
           ${protections}
           <section>
@@ -379,34 +375,25 @@ _DASHBOARD_HTML = """<!DOCTYPE html>
           </div></div>`;
     }
 
-    async function updateSummary() {
-      try {
-        const response = await fetch('/api/summary');
-        if (!response.ok) throw new Error('Summary request failed');
-        renderSummary(await response.json());
-        return true;
-      } catch (_error) {
-        renderSummary({available: false, reason: 'stale-reading'});
-        return false;
-      }
+    async function fetchJson(url, options) {
+      const response = await fetch(url, options);
+      if (!response.ok) throw new Error('Dashboard request failed');
+      return response.json();
     }
 
     async function updateDashboard() {
-      const summaryUpdate = updateSummary();
-      try {
-        const [refreshResponse, response] = await Promise.all([
-          fetch('/api/refresh', {method: 'POST'}),
-          fetch('/api/latest')
-        ]);
-        if (!refreshResponse.ok || !response.ok) throw new Error('Dashboard request failed');
-        renderDashboard(await response.json());
-        const summaryOk = await summaryUpdate;
-        connectionStatus.textContent = summaryOk
-          ? `Updated ${new Date().toLocaleTimeString()}` : 'Bank summary unavailable';
-      } catch (_error) {
-        await summaryUpdate;
-        connectionStatus.textContent = 'Connection paused';
-      }
+      const [refresh, latest, summary] = await Promise.allSettled([
+        fetchJson('/api/refresh', {method: 'POST'}),
+        fetchJson('/api/latest'),
+        fetchJson('/api/summary')
+      ]);
+      const cardsOk = refresh.status === 'fulfilled' && latest.status === 'fulfilled';
+      if (cardsOk) renderDashboard(latest.value);
+      const summaryOk = summary.status === 'fulfilled';
+      renderSummary(summaryOk ? summary.value : {available: false, reason: 'stale-reading'});
+      connectionStatus.textContent = !cardsOk ? 'Connection paused'
+        : !summaryOk ? 'Bank summary unavailable'
+        : `Updated ${new Date().toLocaleTimeString()}`;
     }
 
     updateDashboard();

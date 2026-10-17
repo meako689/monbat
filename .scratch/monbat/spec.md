@@ -298,9 +298,13 @@ Domain language follows the project [GLOSSARY.md](../../GLOSSARY.md):
     Iteration 1 API; the visual graph UI is planned for Iteration 2.
 * **Offgrid-Ready UI Architecture**:
   * **100% Offline**: Zero external CDNs, zero web fonts, zero third-party script tags.
+  * **Literal Battery Labels**: Escape configured names and addresses as text
+    in one shared card header for empty and populated Telemetry views.
   * **Pure CSS Grid Theme**: Responsive multi-card layout with state-of-charge bars, color-coded charge/discharge metrics, cell voltage chips, and delta imbalance indicators.
   * **Vanilla JavaScript Refresh**: On load and every 30 seconds, request a
     refresh and fetch stored latest/summary views using native `fetch()`.
+    One update flow settles all three requests and handles their outcomes;
+    refresh/latest failures retain cards, while summary failures hide totals.
 
 ### 4.5 Dashboard-triggered refresh and freshness
 

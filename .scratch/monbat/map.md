@@ -54,6 +54,10 @@ the approved behavior; implementation is still pending.
   and an unused constant (525 source lines). Historical links preserved;
   remaining entry points and callers checked; 85 offline tests pass.
 
+- **[10 Dashboard rendering and update locality](issues/10-safe-dashboard-config-rendering.md)**:
+  Resolved: one safely escaped Battery header and one update flow; 11
+  real-browser regression cases. All 96 offline tests pass.
+
 ## Not yet specified
 
 - **Iteration 2 historical graphing UI**: Aggregation and downsampling queries over recorded SQLite telemetry, and visual charting presentation (lightweight client-side Chart.js/uPlot vs server-rendered SVG).

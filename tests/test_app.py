@@ -3,10 +3,13 @@ from __future__ import annotations
 import asyncio
 import logging
 import sys
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from playwright.async_api import Page, Route, expect, async_playwright
 
 import monbat
 import monbat.app as app_module
@@ -632,6 +635,118 @@ def test_summary_section_and_single_refresh_timer() -> None:
     with TestClient(build_app(_make_config(), StubTelemetryRepository(), start_poller=False)) as client:
         html = client.get('/').text
     assert html.index('id="bank-summary"') < html.index('id="batteries-grid"')
-    assert "fetch('/api/summary')" in html
     assert html.count('setInterval(') == 1
     assert 'role="progressbar"' in html
+
+
+@asynccontextmanager
+async def _browser_page() -> AsyncIterator[Page]:
+    async with async_playwright() as playwright:
+        browser = await playwright.chromium.launch()
+        try:
+            yield await browser.new_page()
+        finally:
+            await browser.close()
+
+
+@pytest.mark.parametrize("has_telemetry", [False, True])
+def test_dashboard_renders_config_labels_literally(
+    has_telemetry: bool,
+) -> None:
+    async def scenario() -> None:
+        async with _browser_page() as browser_page:
+            name = '<img src=x onerror="window.injected=true"> & "Battery"'
+            address = '</div><script>window.injected=true</script><svg onload="window.injected=true">'
+            config = _make_config(batteries=(BatteryConfig('one', name, address),))
+            repo = StubTelemetryRepository(
+                latest={'one': _make_telemetry(1000) if has_telemetry else None},
+            )
+
+            with TestClient(build_app(config, repo, start_poller=False)) as client:
+                async def serve(route: Route) -> None:
+                    response = client.request(route.request.method, route.request.url)
+                    await route.fulfill(
+                        status=response.status_code, body=response.content,
+                        content_type=response.headers['content-type'],
+                    )
+
+                await browser_page.route('http://monbat.test/**', serve)
+                await browser_page.goto('http://monbat.test/')
+                await expect(browser_page.locator('#batteries-grid .card-title')).to_have_text(name)
+                await expect(browser_page.locator('#batteries-grid .address')).to_have_text(address)
+                await expect(browser_page.locator('#batteries-grid img, #batteries-grid script, #batteries-grid svg')).to_have_count(0)
+                assert await browser_page.evaluate('window.injected === undefined')
+                await expect(browser_page.locator('#batteries-grid .metrics')).to_have_count(int(has_telemetry))
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("failure", ['http', 'network', 'json'])
+@pytest.mark.parametrize("endpoint", ['/api/refresh', '/api/latest', '/api/summary'])
+def test_dashboard_request_failure_and_recovery(
+    monkeypatch: pytest.MonkeyPatch,
+    endpoint: str, failure: str,
+) -> None:
+    async def scenario() -> None:
+        async with _browser_page() as browser_page:
+            from dataclasses import replace
+
+            monkeypatch.setattr(app_module.time, 'time', lambda: 1000)
+            repo = StubTelemetryRepository(latest={
+                'bat-1': _make_telemetry(990), 'bat-2': _make_telemetry(990),
+            })
+            fail = False
+            requests: list[tuple[str, str]] = []
+            errors: list[str] = []
+            browser_page.on('pageerror', lambda error: errors.append(str(error)))
+
+            with TestClient(build_app(_make_config(), repo, start_poller=False)) as client:
+                async def serve(route: Route) -> None:
+                    path = route.request.url.removeprefix('http://monbat.test')
+                    requests.append((route.request.method, path))
+                    if fail and path == endpoint:
+                        if failure == 'network':
+                            await route.abort()
+                        else:
+                            await route.fulfill(
+                                status=503 if failure == 'http' else 200,
+                                body='invalid JSON', content_type='application/json',
+                            )
+                        return
+                    response = client.request(route.request.method, route.request.url)
+                    await route.fulfill(
+                        status=response.status_code, body=response.content,
+                        content_type=response.headers['content-type'],
+                    )
+
+                await browser_page.route('http://monbat.test/**', serve)
+                await browser_page.goto('http://monbat.test/')
+                await expect(browser_page.locator('#connection-status')).to_contain_text('Updated')
+                cards_before = await browser_page.locator('#batteries-grid').inner_html()
+                await expect(browser_page.locator('#bank-summary [role=progressbar]')).to_have_count(1)
+                repo.latest['bat-1'] = replace(_make_telemetry(990), soc_percent=70)
+                requests.clear()
+                fail = True
+                await browser_page.evaluate('updateDashboard()')
+
+                assert sorted(requests) == [
+                    ('GET', '/api/latest'), ('GET', '/api/summary'), ('POST', '/api/refresh'),
+                ]
+                if endpoint == '/api/summary':
+                    await expect(browser_page.locator('#connection-status')).to_have_text('Bank summary unavailable')
+                    await expect(browser_page.locator('#bank-summary [role=progressbar]')).to_have_count(0)
+                    await expect(browser_page.locator('#bank-summary .metric-value')).to_have_count(0)
+                    assert await browser_page.locator('#batteries-grid').inner_html() != cards_before
+                else:
+                    await expect(browser_page.locator('#connection-status')).to_have_text('Connection paused')
+                    assert await browser_page.locator('#batteries-grid').inner_html() == cards_before
+                    await expect(browser_page.locator('#bank-summary [role=progressbar]')).to_have_count(1)
+
+                fail = False
+                await browser_page.evaluate('updateDashboard()')
+                await expect(browser_page.locator('#connection-status')).to_contain_text('Updated')
+                await expect(browser_page.locator('#bank-summary [role=progressbar]')).to_have_count(1)
+                assert await browser_page.locator('#batteries-grid').inner_html() != cards_before
+                assert errors == []
+
+    asyncio.run(scenario())
