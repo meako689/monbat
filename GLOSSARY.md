@@ -18,9 +18,10 @@ SOC and its source, BMS state, protection flags, SOH, and cycle count.
 _Avoid_: Metrics, stats, data point, sample
 
 **Poller**:
-The single coroutine that connects to each Battery sequentially to request and
-persist Telemetry. It follows a configured background delay and can wake early
-for eligible Dashboard refresh requests.
+The single scheduling owner that requests and persists Telemetry. Dashboard
+SSE subscribers enable frequent collection and optional retained BLE connections;
+without subscribers it uses a long background cadence. Configured concurrency
+limits simultaneous requests, independently of retained connections.
 _Avoid_: Collector, scraper, monitor worker
 
 **Battery Bank**:

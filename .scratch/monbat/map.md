@@ -74,3 +74,24 @@ the approved behavior; implementation is still pending.
 - BMS parameter writing, cell balancing overrides, or firmware modifications (ruled out: strictly read-only telemetry monitoring).
 - Balancing-state research or reverse-engineering follow-up (explicitly omitted
   on 2026-10-17; the reviewed decoder provides no separate balancing state).
+
+## Update speed tasks — 2026-10-17
+
+Requested scope; design decisions pending grilling.
+
+- **[Poll two Batteries concurrently](issues/16-concurrent-battery-polling.md)**: Open; provisional scope and validation recorded in the ticket.
+- **[Keep BLE connections open](issues/17-persistent-ble-connections.md)**: Open; provisional scope and validation recorded in the ticket.
+- **[Implement SSE for Dashboard updates](issues/18-dashboard-sse.md)**: Open; provisional scope and validation recorded in the ticket.
+
+Grilling decisions: 10-second scheduled collection independent of tabs; configurable concurrency default 1; optional connection reuse default disabled; reconnect backoff 10/20/40/60 seconds; SSE replaces browser refresh requests. User answered both rounds; final shared-understanding confirmation pending.
+
+Updated browser-aware design: active SSE subscribers enable 10-second collection; no subscribers uses long background polling (default 600 seconds), after a 30-second grace period. Persistent connections default enabled during active collection and close afterward. Current macOS dual-connection smoke test passed: sequential reads and three concurrent rounds, eight valid responses total. Read concurrency and retained connection count must be separate.
+
+Tickets [16](issues/16-concurrent-battery-polling.md),
+[17](issues/17-persistent-ble-connections.md),
+[18](issues/18-dashboard-sse.md), and
+[19](issues/19-discovery-hardware-validation.md) resolved: browser-aware polling,
+retained clients, SSE, and rediscovery reuse/automatic hardware validation.
+88 offline tests pass. Implemented live probe: sequential average 0.482s,
+concurrent average 0.282s across three rounds each on current macOS hardware.
+Existing configuration retained; rediscovery will save tested concurrency 2 here.

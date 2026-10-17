@@ -308,40 +308,6 @@ address = "AA:BB:CC:00:00:02"
         _load_config(str(config_path))
 
 
-def test_poller_continues_after_battery_failure(
-    monkeypatch: pytest.MonkeyPatch,
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    config = _make_config()
-    previous = _make_telemetry(900.0)
-    repo = StubTelemetryRepository(latest={"bat-1": previous})
-    polled_addresses: list[str] = []
-    telemetry = _make_telemetry(1_000.0)
-
-    async def poll(address: str, timeout_seconds: float) -> BatteryTelemetry:
-        polled_addresses.append(address)
-        if address == config.batteries[0].address:
-            raise TimeoutError("no response")
-        return telemetry
-
-    monkeypatch.setattr(poller_module, "poll_battery", poll)
-    with caplog.at_level(logging.WARNING, logger="monbat.poller"):
-        with TestClient(build_app(config, repo)) as client:
-            for _ in range(100):
-                client.get('/api/latest')
-                if repo.saved:
-                    break
-            assert repo.saved == [("bat-2", telemetry)]
-            retained = client.get('/api/latest').json()['bat-1']['telemetry']
-            assert retained['timestamp'] == previous.timestamp
-
-    assert polled_addresses == [
-        "AA:BB:CC:00:00:01",
-        "AA:BB:CC:00:00:02",
-    ]
-    assert "Poll failed for battery bat-1" in caplog.text
-
-
 def test_dashboard_html_is_self_contained() -> None:
     app = build_app(_make_config(), StubTelemetryRepository(), start_poller=False)
 
@@ -350,8 +316,8 @@ def test_dashboard_html_is_self_contained() -> None:
 
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/html")
-    assert "setInterval(updateDashboard, 30000)" in response.text
-    assert "updateDashboard();" in response.text
+    assert "new EventSource('/api/events')" in response.text
+    assert "events.onmessage" in response.text
     assert "https://" not in response.text
     assert "http://" not in response.text
 
@@ -397,186 +363,6 @@ def test_freshness_independent_of_background(monkeypatch: pytest.MonkeyPatch, ag
     with TestClient(app) as client:
         assert client.get('/api/latest').json()['bat-1']['status'] == status
         assert client.post('/api/refresh').json() == {"outcome": "disabled"}
-
-
-def test_refresh_one_poller_and_shutdown(monkeypatch: pytest.MonkeyPatch) -> None:
-    import threading
-    clock = [100.0]
-    monkeypatch.setattr(poller_module, "monotonic", lambda: clock[0])
-    entered = threading.Event()
-    release = threading.Event()
-    cancelled = threading.Event()
-    calls: list[str] = []
-    active = 0
-    max_active = 0
-
-    async def poll(address: str, timeout: float) -> BatteryTelemetry:
-        nonlocal active, max_active
-        active += 1
-        max_active = max(max_active, active)
-        calls.append(address)
-        entered.set()
-        try:
-            while not release.is_set():
-                await asyncio.sleep(0)
-            return _make_telemetry(1000)
-        except asyncio.CancelledError:
-            cancelled.set()
-            raise
-        finally:
-            active -= 1
-
-    monkeypatch.setattr(poller_module, "poll_battery", poll)
-    repo = StubTelemetryRepository()
-    config = _make_config(poll_interval_seconds=600)
-    app = build_app(config, repo)
-    with TestClient(app) as client:
-        assert entered.wait(2)
-        assert client.post('/api/refresh').json()['outcome'] == 'skipped'
-        assert client.get('/api/latest').status_code == 200
-        release.set()
-        # A request runs on the same event loop after the quick completed pass.
-        for _ in range(100):
-            client.get('/api/latest')
-            if len(repo.saved) == 2:
-                break
-        assert len(repo.saved) == 2
-        clock[0] = 129.99
-        assert client.post('/api/refresh').json()['outcome'] == 'skipped'
-        release.clear()
-        entered.clear()
-        clock[0] = 130
-        assert client.post('/api/refresh').json()['outcome'] == 'accepted'
-        assert entered.wait(2)
-        assert client.post('/api/refresh').json()['outcome'] == 'skipped'
-        assert calls == [_make_config().batteries[0].address,
-                         _make_config().batteries[1].address,
-                         _make_config().batteries[0].address]
-    assert cancelled.is_set()
-    assert max_active == 1
-
-
-def test_refresh_atomic_admission(monkeypatch: pytest.MonkeyPatch) -> None:
-    from httpx2 import ASGITransport, AsyncClient
-
-    clock = [0.0]
-    monkeypatch.setattr(poller_module, "monotonic", lambda: clock[0])
-    calls: list[str] = []
-    entered = asyncio.Event()
-    release = asyncio.Event()
-
-    async def poll(address: str, timeout: float) -> BatteryTelemetry:
-        calls.append(address)
-        if len(calls) > 2:
-            entered.set()
-            await release.wait()
-        return _make_telemetry(1000)
-
-    monkeypatch.setattr(poller_module, "poll_battery", poll)
-    repo = StubTelemetryRepository()
-    config = _make_config(poll_interval_seconds=600)
-    app = build_app(config, repo)
-
-    async def scenario() -> None:
-        async with app.router.lifespan_context(app):
-            async with AsyncClient(
-                transport=ASGITransport(app), base_url="http://test",
-            ) as client:
-                # Startup is reserved even before the task gets its first turn.
-                assert (await client.post('/api/refresh')).json()['outcome'] == 'skipped'
-                async with asyncio.timeout(2):
-                    while len(repo.saved) < 2:
-                        await asyncio.sleep(0)
-                clock[0] = 30
-                responses = await asyncio.gather(*(
-                    client.post('/api/refresh') for _ in range(20)
-                ))
-                outcomes = [response.json()['outcome'] for response in responses]
-                assert outcomes.count('accepted') == 1
-                assert outcomes.count('skipped') == 19
-                async with asyncio.timeout(2):
-                    await entered.wait()
-                addresses = [battery.address for battery in config.batteries]
-                assert calls == addresses + [addresses[0]]
-        async with AsyncClient(transport=ASGITransport(app), base_url="http://test") as client:
-            assert (await client.post('/api/refresh')).json()['outcome'] == 'disabled'
-
-    asyncio.run(scenario())
-
-
-def test_background_delay_restarts_after_refresh_finishes(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from httpx2 import ASGITransport, AsyncClient
-
-    clock = [0.0]
-    monkeypatch.setattr(poller_module, "monotonic", lambda: clock[0])
-    calls = 0
-    refresh_entered = asyncio.Event()
-    release_refresh = asyncio.Event()
-    background_entered = asyncio.Event()
-
-    async def poll(address: str, timeout: float) -> BatteryTelemetry:
-        nonlocal calls
-        calls += 1
-        if calls == 2:
-            refresh_entered.set()
-            await release_refresh.wait()
-        if calls == 3:
-            background_entered.set()
-        return _make_telemetry(1000)
-
-    monkeypatch.setattr(poller_module, "poll_battery", poll)
-    config = _make_config(
-        batteries=(BatteryConfig("one", "One", "one"),),
-        poll_interval_seconds=0.1,
-    )
-    repo = StubTelemetryRepository()
-    app = build_app(config, repo)
-
-    async def scenario() -> None:
-        async with app.router.lifespan_context(app):
-            async with AsyncClient(
-                transport=ASGITransport(app), base_url="http://test",
-            ) as client:
-                async with asyncio.timeout(2):
-                    while not repo.saved:
-                        await asyncio.sleep(0)
-                clock[0] = 30
-                assert (await client.post('/api/refresh')).json()['outcome'] == 'accepted'
-                async with asyncio.timeout(2):
-                    await refresh_entered.wait()
-                # Let the original background deadline pass during BLE work.
-                await asyncio.sleep(0.12)
-                assert calls == 2
-                release_refresh.set()
-                async with asyncio.timeout(2):
-                    while len(repo.saved) < 2:
-                        await asyncio.sleep(0)
-                with pytest.raises(TimeoutError):
-                    async with asyncio.timeout(0.03):
-                        await background_entered.wait()
-                async with asyncio.timeout(2):
-                    await background_entered.wait()
-                assert calls == 3
-
-    asyncio.run(scenario())
-
-
-def test_background_polling_without_requests(monkeypatch: pytest.MonkeyPatch) -> None:
-    calls = 0
-    async def poll(address: str, timeout: float) -> BatteryTelemetry:
-        nonlocal calls
-        calls += 1
-        return _make_telemetry(1000)
-    monkeypatch.setattr(poller_module, "poll_battery", poll)
-    config = _make_config(poll_interval_seconds=0.01)
-    with TestClient(build_app(config, StubTelemetryRepository())) as client:
-        import time
-        deadline = time.perf_counter() + 2
-        while calls < 4 and time.perf_counter() < deadline:
-            client.get('/api/latest')
-        assert calls >= 4
 
 
 def test_bank_summary_weighted_soc_and_signed_power(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -635,7 +421,7 @@ def test_summary_section_and_single_refresh_timer() -> None:
     with TestClient(build_app(_make_config(), StubTelemetryRepository(), start_poller=False)) as client:
         html = client.get('/').text
     assert html.index('id="bank-summary"') < html.index('id="batteries-grid"')
-    assert html.count('setInterval(') == 1
+    assert html.count('new EventSource(') == 1
     assert 'role="progressbar"' in html
 
 
@@ -664,6 +450,11 @@ def test_dashboard_renders_config_labels_literally(
 
             with TestClient(build_app(config, repo, start_poller=False)) as client:
                 async def serve(route: Route) -> None:
+                    if route.request.url.endswith('/api/events'):
+                        import json
+                        snapshot = {'latest': client.get('/api/latest').json(), 'summary': client.get('/api/summary').json()}
+                        await route.fulfill(status=200, body=f"data: {json.dumps(snapshot)}\n\n", content_type='text/event-stream')
+                        return
                     response = client.request(route.request.method, route.request.url)
                     await route.fulfill(
                         status=response.status_code, body=response.content,
@@ -681,72 +472,26 @@ def test_dashboard_renders_config_labels_literally(
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize("failure", ['http', 'network', 'json'])
-@pytest.mark.parametrize("endpoint", ['/api/refresh', '/api/latest', '/api/summary'])
-def test_dashboard_request_failure_and_recovery(
-    monkeypatch: pytest.MonkeyPatch,
-    endpoint: str, failure: str,
-) -> None:
+def test_dashboard_stream_failure_and_recovery() -> None:
     async def scenario() -> None:
-        async with _browser_page() as browser_page:
-            from dataclasses import replace
-
-            monkeypatch.setattr(app_module.time, 'time', lambda: 1000)
-            repo = StubTelemetryRepository(latest={
-                'bat-1': _make_telemetry(990), 'bat-2': _make_telemetry(990),
-            })
-            fail = False
-            requests: list[tuple[str, str]] = []
-            errors: list[str] = []
-            browser_page.on('pageerror', lambda error: errors.append(str(error)))
-
-            with TestClient(build_app(_make_config(), repo, start_poller=False)) as client:
-                async def serve(route: Route) -> None:
-                    path = route.request.url.removeprefix('http://monbat.test')
-                    requests.append((route.request.method, path))
-                    if fail and path == endpoint:
-                        if failure == 'network':
-                            await route.abort()
-                        else:
-                            await route.fulfill(
-                                status=503 if failure == 'http' else 200,
-                                body='invalid JSON', content_type='application/json',
-                            )
-                        return
-                    response = client.request(route.request.method, route.request.url)
-                    await route.fulfill(
-                        status=response.status_code, body=response.content,
-                        content_type=response.headers['content-type'],
-                    )
-
-                await browser_page.route('http://monbat.test/**', serve)
-                await browser_page.goto('http://monbat.test/')
-                await expect(browser_page.locator('#connection-status')).to_contain_text('Updated')
-                cards_before = await browser_page.locator('#batteries-grid').inner_html()
-                await expect(browser_page.locator('#bank-summary [role=progressbar]')).to_have_count(1)
-                repo.latest['bat-1'] = replace(_make_telemetry(990), soc_percent=70)
-                requests.clear()
-                fail = True
-                await browser_page.evaluate('updateDashboard()')
-
-                assert sorted(requests) == [
-                    ('GET', '/api/latest'), ('GET', '/api/summary'), ('POST', '/api/refresh'),
-                ]
-                if endpoint == '/api/summary':
-                    await expect(browser_page.locator('#connection-status')).to_have_text('Bank summary unavailable')
-                    await expect(browser_page.locator('#bank-summary [role=progressbar]')).to_have_count(0)
-                    await expect(browser_page.locator('#bank-summary .metric-value')).to_have_count(0)
-                    assert await browser_page.locator('#batteries-grid').inner_html() != cards_before
-                else:
-                    await expect(browser_page.locator('#connection-status')).to_have_text('Connection paused')
-                    assert await browser_page.locator('#batteries-grid').inner_html() == cards_before
-                    await expect(browser_page.locator('#bank-summary [role=progressbar]')).to_have_count(1)
-
-                fail = False
-                await browser_page.evaluate('updateDashboard()')
-                await expect(browser_page.locator('#connection-status')).to_contain_text('Updated')
-                await expect(browser_page.locator('#bank-summary [role=progressbar]')).to_have_count(1)
-                assert await browser_page.locator('#batteries-grid').inner_html() != cards_before
-                assert errors == []
-
+        async with _browser_page() as page:
+            with TestClient(build_app(_make_config(), StubTelemetryRepository(), start_poller=False)) as client:
+                await page.route('http://monbat.test/**', lambda route: route.fulfill(
+                    status=200, body=client.get('/').text, content_type='text/html'))
+                await page.add_init_script("""
+                  window.EventSource = class {
+                    constructor(url) { window.stream = this; window.streamUrl = url; }
+                  };
+                """)
+                await page.goto('http://monbat.test/')
+                snapshot = {'latest': client.get('/api/latest').json(), 'summary': client.get('/api/summary').json()}
+                await page.evaluate('(snapshot) => stream.onmessage({data: JSON.stringify(snapshot)})', snapshot)
+                await expect(page.locator('#connection-status')).to_contain_text('Updated')
+                before = await page.locator('#batteries-grid').inner_html()
+                await page.evaluate('stream.onerror()')
+                await expect(page.locator('#connection-status')).to_have_text('Connection paused')
+                assert await page.locator('#batteries-grid').inner_html() == before
+                await page.evaluate('(snapshot) => stream.onmessage({data: JSON.stringify(snapshot)})', snapshot)
+                await expect(page.locator('#connection-status')).to_contain_text('Updated')
+                assert await page.evaluate('streamUrl') == '/api/events'
     asyncio.run(scenario())

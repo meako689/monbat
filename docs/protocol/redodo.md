@@ -1,8 +1,10 @@
 # Redodo BMS protocol
 
 The driver uses the read-only `0x13` status request over GATT service `FFE0`,
-notifications `FFE1`, and writes `FFE2`. It connects to Batteries sequentially,
-collects a complete response, and disconnects.
+notifications `FFE1`, and writes `FFE2`. It uses shared discovery and configurable request concurrency. During active
+Dashboard collection it can retain connections and notification subscriptions;
+background passes disconnect after reading. Each request collects and validates
+a separate complete response.
 
 Frames are realigned to the status header and collected using their declared
 length. Header, length, required field coverage, and checksum are validated

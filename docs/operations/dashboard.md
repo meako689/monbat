@@ -8,14 +8,24 @@ HTML-looking labels.
 
 ## Refresh and freshness
 
-Page load and the 30-second update timer request an asynchronous BLE pass and
-read stored Telemetry immediately. New readings appear on a later update.
-One sequential Poller handles background polling and page requests.
+The Dashboard opens `/api/events` through native JavaScript `EventSource`.
+The stream sends an initial stored snapshot and checks for saved Telemetry and
+freshness transitions every second. Reconnection is automatic; multiple tabs
+share one Poller. Hidden tabs count as connected subscribers.
 
-Requests during an active or scheduled pass, or within 30 seconds of the last
-pass starting, are skipped without a queued retry. This applies across tabs.
-An accepted request wakes the Poller early; the configured background delay
-restarts after the pass finishes. Background polling continues with no page open.
+The first subscriber wakes collection immediately. While subscribed, collection
+uses `active_interval_seconds` (default 10), measured between scheduled starts.
+Missed slots are skipped; requests to one Battery never overlap. After the last
+subscriber disconnects, a 30-second grace period allows reloads/reconnections.
+Then BLE clients close and the long background cadence resumes.
+
+Persistent connections are enabled by default during active collection.
+The service logs each persistent connection start and successful finish at INFO
+level with the Battery ID. Disconnect failures are logged at WARNING level.
+`concurrency` limits simultaneous status requests, independently of how many
+BLE connections remain open. Background passes connect, read, and disconnect.
+Failures retain previous readings and retry with 10/20/40/60-second backoff,
+subject to the current collection cadence. Healthy Batteries continue updating.
 
 Readings older than `freshness_seconds` are offline; equality is still fresh.
 Failed polls retain the last successful reading and its original timestamp.
@@ -39,6 +49,7 @@ request failure also hides the totals.
 
 | Endpoint | Behavior |
 |---|---|
+| `GET /api/events` | SSE snapshots containing `latest` and `summary`; subscriber presence controls active collection |
 | `GET /api/latest` | Stored readings keyed by configured Battery ID, with reading status and cell delta |
 | `POST /api/refresh` | Returns `accepted`, `skipped`, or `disabled`; acceptance schedules a pass without waiting for BLE |
 | `GET /api/summary` | Availability, capacity-weighted SOC, signed net watts, and unavailable reason |

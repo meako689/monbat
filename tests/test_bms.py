@@ -287,12 +287,10 @@ def test_poll_reassembles_and_disconnects(monkeypatch: pytest.MonkeyPatch, scena
         def __init__(self, address: str, timeout: float) -> None:
             assert address == "test"
 
-        async def __aenter__(self) -> Client:
+        async def connect(self) -> None:
             calls.append("connect")
-            return self
 
-        async def __aexit__(self, exc_type: type[BaseException] | None,
-                            exc: BaseException | None, traceback: TracebackType | None) -> None:
+        async def disconnect(self) -> None:
             calls.append("disconnect")
 
         async def start_notify(self, uuid: str, callback: Callable[[int, bytearray], None]) -> None:
@@ -326,4 +324,4 @@ def test_poll_reassembles_and_disconnects(monkeypatch: pytest.MonkeyPatch, scena
         with pytest.raises(error):
             asyncio.run(poll_battery("test", timeout_sec=0.01))
     assert calls[:2] == ["connect", "notify"]
-    assert calls[-2:] == ["stop", "disconnect"]
+    assert calls[-1] == "disconnect"

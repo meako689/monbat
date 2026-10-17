@@ -13,6 +13,7 @@ import struct
 import time
 from dataclasses import dataclass
 from typing import Literal
+from bleak.backends.device import BLEDevice
 
 TX_NOTIFY_UUID = "0000ffe1-0000-1000-8000-00805f9b34fb"
 RX_WRITE_UUID = "0000ffe2-0000-1000-8000-00805f9b34fb"
@@ -155,49 +156,57 @@ def parse_bms_payload(data: bytes, timestamp: float | None = None) -> BatteryTel
     )
 
 
-async def poll_battery(address: str, timeout_sec: float = 10.0) -> BatteryTelemetry:
-    """Connect to a battery, request a telemetry frame, and disconnect.
+class BatteryConnection:
+    """One subscribed BLE client; callers must serialize requests."""
 
-    Performs a single connect → start_notify → write → await notification →
-    stop_notify → disconnect cycle.
+    def __init__(self, device: BLEDevice | str, timeout_sec: float = 10.0) -> None:
+        from bleak import BleakClient
+        self.client = BleakClient(device, timeout=timeout_sec)
+        self.timeout = timeout_sec
+        self.buffer = bytearray()
+        self.ready = asyncio.Event()
+        self.waiting = False
 
-    Args:
-        address:     Bleak device address for the battery BMS. Its format depends
-                     on the platform (for example, a MAC address or UUID).
-        timeout_sec: Seconds to wait for both connection and notification.
-
-    Returns:
-        Parsed BatteryTelemetry snapshot.
-
-    Raises:
-        ConnectionError: if the BleakClient fails to connect.
-        TimeoutError:    if the notification does not arrive within timeout_sec.
-    """
-    from bleak import BleakClient  # local import keeps module importable without bleak
-
-    raw_data = bytearray()
-    notify_event = asyncio.Event()
-
-    def _on_notification(_sender: int, chunk: bytearray) -> None:
-        if notify_event.is_set():
+    def _notify(self, _sender: object, chunk: bytearray) -> None:
+        if not self.waiting or self.ready.is_set():
             return
-        raw_data.extend(chunk[:MAX_RESPONSE_BYTES - len(raw_data)])
-        expected = expected_response_length(raw_data)
-        if len(raw_data) >= MAX_RESPONSE_BYTES or (
-            expected is not None and len(raw_data) >= expected
+        self.buffer.extend(chunk[:MAX_RESPONSE_BYTES - len(self.buffer)])
+        expected = expected_response_length(self.buffer)
+        if len(self.buffer) >= MAX_RESPONSE_BYTES or (
+            expected is not None and len(self.buffer) >= expected
         ):
-            notify_event.set()
+            self.ready.set()
 
-    async with BleakClient(address, timeout=timeout_sec) as client:
-        if not client.is_connected:
-            raise ConnectionError(f"Could not connect to battery at {address}")
-
-        await client.start_notify(TX_NOTIFY_UUID, _on_notification)
+    async def connect(self) -> None:
+        await self.client.connect()
         try:
-            await client.write_gatt_char(RX_WRITE_UUID, REQUEST_PAYLOAD, response=False)
-            async with asyncio.timeout(timeout_sec):
-                await notify_event.wait()
-        finally:
-            await client.stop_notify(TX_NOTIFY_UUID)
+            await self.client.start_notify(TX_NOTIFY_UUID, self._notify)
+        except BaseException:
+            await self.client.disconnect()
+            raise
 
-    return parse_bms_payload(bytes(raw_data))
+    async def close(self) -> None:
+        # Disconnect also removes notification subscriptions.
+        await self.client.disconnect()
+
+    async def read(self) -> BatteryTelemetry:
+        self.buffer.clear()
+        self.ready.clear()
+        self.waiting = True
+        try:
+            async with asyncio.timeout(self.timeout):
+                await self.client.write_gatt_char(RX_WRITE_UUID, REQUEST_PAYLOAD, response=False)
+                await self.ready.wait()
+            return parse_bms_payload(bytes(self.buffer))
+        finally:
+            self.waiting = False
+
+
+async def poll_battery(address: str, timeout_sec: float = 10.0) -> BatteryTelemetry:
+    """Read once and disconnect, using the same lifecycle as retained clients."""
+    connection = BatteryConnection(address, timeout_sec)
+    try:
+        await connection.connect()
+        return await connection.read()
+    finally:
+        await connection.close()

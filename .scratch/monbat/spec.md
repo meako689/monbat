@@ -375,3 +375,20 @@ timer. A summary fetch failure shows unavailable totals.
    * Net current and optional time-to-empty/time-to-full calculations.
    * System health alerts (low cell voltage, high temperature cutoffs).
    * Linux systemd user service packaging (`monbat.service`).
+
+## Update speed revision — 2026-10-17
+
+This revision supersedes sequential-only polling, Dashboard-triggered passes,
+and the fixed 30-second browser update timer above. See tickets 16–19.
+
+SSE `/api/events` delivers initial `latest`/`summary` snapshots and checks saved
+readings/freshness each second. First subscriber wakes collection immediately;
+subscribers (including hidden tabs) share a 10-second active start cadence.
+Last disconnect allows 30 seconds of grace, then closes clients and resumes the
+configured long background start interval (new discovery default 600 seconds).
+Missed slots are skipped. Persistent connections default enabled during active
+collection. Read concurrency defaults to 1, without limiting retained clients.
+Failure backoff is 10/20/40/60 seconds, subject to collection cadence. Each Battery
+request has a fresh bounded response buffer; shutdown disconnects retained clients.
+Discovery reuses existing configuration and known Battery labels, tests sequential
+and concurrency-2 retained-client reads, and automatically saves tested concurrency.

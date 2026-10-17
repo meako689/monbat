@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import math
 import time
 import tomllib
@@ -13,7 +14,7 @@ from pathlib import Path
 from typing import Literal
 
 from fastapi import FastAPI, Query
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, StreamingResponse
 
 from monbat.bms import BatteryTelemetry
 from monbat.db import TelemetryRepository
@@ -30,6 +31,9 @@ class PollerConfig:
     timeout_seconds: float
     sqlite_path: str
     freshness_seconds: float = 60.0
+    active_interval_seconds: float = 10.0
+    concurrency: int = 1
+    persistent_connections: bool = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -137,7 +141,18 @@ def _parse_config(value: object) -> AppConfig:
     poller_table = _require_table(_require_value(root, "poller", "root"), "poller")
     server_table = _require_table(_require_value(root, "server", "root"), "server")
 
+    concurrency = poller_table.get("concurrency", 1)
+    if isinstance(concurrency, bool) or not isinstance(concurrency, int) or concurrency < 1:
+        raise ValueError("poller.concurrency must be a positive integer")
+    persistent = poller_table.get("persistent_connections", True)
+    if not isinstance(persistent, bool):
+        raise ValueError("poller.persistent_connections must be a boolean")
     poller = PollerConfig(
+        concurrency=concurrency,
+        persistent_connections=persistent,
+        active_interval_seconds=_require_positive_float(
+            poller_table.get("active_interval_seconds", 10), "poller.active_interval_seconds"
+        ),
         poll_interval_seconds=_require_positive_float(
             _require_value(poller_table, "poll_interval_seconds", "poller"),
             "poller.poll_interval_seconds",
@@ -381,23 +396,16 @@ _DASHBOARD_HTML = """<!DOCTYPE html>
       return response.json();
     }
 
-    async function updateDashboard() {
-      const [refresh, latest, summary] = await Promise.allSettled([
-        fetchJson('/api/refresh', {method: 'POST'}),
-        fetchJson('/api/latest'),
-        fetchJson('/api/summary')
-      ]);
-      const cardsOk = refresh.status === 'fulfilled' && latest.status === 'fulfilled';
-      if (cardsOk) renderDashboard(latest.value);
-      const summaryOk = summary.status === 'fulfilled';
-      renderSummary(summaryOk ? summary.value : {available: false, reason: 'stale-reading'});
-      connectionStatus.textContent = !cardsOk ? 'Connection paused'
-        : !summaryOk ? 'Bank summary unavailable'
-        : `Updated ${new Date().toLocaleTimeString()}`;
-    }
-
-    updateDashboard();
-    setInterval(updateDashboard, 30000);
+    const events = new EventSource('/api/events');
+    events.onmessage = event => {
+      const snapshot = JSON.parse(event.data);
+      renderDashboard(snapshot.latest);
+      renderSummary(snapshot.summary);
+      connectionStatus.textContent = `Updated ${new Date().toLocaleTimeString()}`;
+    };
+    events.onerror = () => {
+      connectionStatus.textContent = 'Connection paused';
+    };
   </script>
 </body>
 </html>
@@ -469,6 +477,33 @@ def build_app(
         ]
         return _bank_summary(readings, config.poller.freshness_seconds, time.time())
 
+    @app.get("/api/events")
+    async def events() -> StreamingResponse:
+        async def stream() -> AsyncIterator[str]:
+            subscriber = poller
+            if subscriber is not None:
+                subscriber.subscribe()
+            try:
+                previous = ""
+                while True:
+                    snapshot = json.dumps({
+                        "latest": await latest(),
+                        "summary": asdict(await summary()),
+                    }, allow_nan=False)
+                    if snapshot != previous:
+                        yield f"data: {snapshot}\n\n"
+                        previous = snapshot
+                    else:
+                        yield ": heartbeat\n\n"
+                    # Also detect freshness expiry when BLE yields no new data.
+                    await asyncio.sleep(1)
+            finally:
+                if subscriber is not None:
+                    subscriber.unsubscribe()
+        return StreamingResponse(stream(), media_type="text/event-stream", headers={
+            "Cache-Control": "no-cache", "X-Accel-Buffering": "no",
+        })
+
     @app.get("/api/history")
     async def history(
         hours: float = Query(default=24.0, gt=0.0),
@@ -504,4 +539,13 @@ def serve(config_path: str = "config.toml") -> None:
 
     import uvicorn
 
-    uvicorn.run(app, host=config.server.host, port=config.server.port)
+    from copy import deepcopy
+    from uvicorn.config import LOGGING_CONFIG
+
+    log_config = deepcopy(LOGGING_CONFIG)
+    log_config["loggers"]["monbat"] = {
+        "handlers": ["default"], "level": "INFO", "propagate": False,
+    }
+    uvicorn.run(
+        app, host=config.server.host, port=config.server.port, log_config=log_config,
+    )

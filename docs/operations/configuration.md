@@ -9,14 +9,29 @@
 ```toml
 [poller]
 poll_interval_seconds = 600
+active_interval_seconds = 10
+concurrency = 1
+persistent_connections = true
 timeout_seconds = 10.0
 freshness_seconds = 60
 sqlite_path = "monbat-health.db"
 ```
 
-`poll_interval_seconds` is the background delay after each sequential BLE pass.
-Discovery defaults to 30 seconds; 600 seconds gives a 10-minute background
-interval. Dashboard requests can wake the Poller early.
+`poll_interval_seconds` is the background scheduled-start interval with no
+Dashboard subscribers. Discovery defaults to 600 seconds; existing values are
+preserved. Active subscribers use `active_interval_seconds` (default 10).
+Missed scheduled slots are skipped. `concurrency` caps simultaneous status
+requests, not retained connections. `persistent_connections` defaults to true
+and retains clients only during active collection and its 30-second grace period.
+
+Rediscovery reads existing configuration, offers the discovered configured
+Batteries as the default selection, and reuses their IDs, names, and settings.
+New Batteries prompt for names. A shared scan supplies BLEDevice objects.
+Discovery holds selected connections open and tests three sequential and three
+concurrent rounds (up to two simultaneous requests), then saves the tested
+concurrency automatically. Failed validation saves 1 and reports the failure.
+This short test does not establish long-run or cross-platform reliability.
+Existing configuration still requires overwrite confirmation.
 
 `timeout_seconds` controls the BLE connection and response timeouts.
 `freshness_seconds` sets the maximum reading age for online status and bank
