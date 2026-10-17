@@ -10,7 +10,7 @@ How should the Redodo/LiTime BLE GATT communication (service `0xFFE0`, TX notify
 
 ## Answer
 
-Validated through prototype [prototype_bms_driver.py](../../src/monbat/prototype_bms_driver.py):
+Validated through prototype [prototype_bms_driver.py](https://github.com/meako689/monbat/blob/66148347d2ecb08324bd2e2299ddcc49f6705c3b/src/monbat/prototype_bms_driver.py):
 
 1. **Protocol & GATT UUIDs**:
    - Service: `0000ffe0-0000-1000-8000-00805f9b34fb` (or short `"ffe0"`)
@@ -32,3 +32,9 @@ Validated through prototype [prototype_bms_driver.py](../../src/monbat/prototype
    - `BleakClient` manages single-poll lifecycle: connect -> `start_notify` -> `write_gatt_char(response=False)` -> await notification event -> `stop_notify` -> disconnect.
    - Buffer chunks: Accumulates notification fragments in a `bytearray` to reliably handle MTU fragmentation across BLE packets.
    - Shallow control flow: Guard clauses handle timeouts, short payloads, and zero-capacity divide-by-zero checks cleanly. Output stored in immutable `BatteryTelemetry` dataclass (`slots=True, frozen=True`).
+
+## Comments
+
+- 2026-10-17: Retired the redundant prototype in ticket 15. The link above
+  preserves its last version. Current protocol behavior is in spec section
+  4.2, `src/monbat/bms.py`, and `tests/test_bms.py`.

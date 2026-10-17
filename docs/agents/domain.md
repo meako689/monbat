@@ -2,6 +2,8 @@
 
 How the engineering skills should consume this repo's domain documentation when exploring the codebase.
 
+This repo uses a single-context layout: root `GLOSSARY.md` and `docs/adr/`.
+
 ## Before exploring, read these
 
 - **`GLOSSARY.md`** at the repo root, or

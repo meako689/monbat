@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 
 import monbat
 import monbat.app as app_module
+import monbat.poller as poller_module
 from monbat.app import (
     AppConfig,
     BatteryConfig,
@@ -309,7 +310,8 @@ def test_poller_continues_after_battery_failure(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     config = _make_config()
-    repo = StubTelemetryRepository()
+    previous = _make_telemetry(900.0)
+    repo = StubTelemetryRepository(latest={"bat-1": previous})
     polled_addresses: list[str] = []
     telemetry = _make_telemetry(1_000.0)
 
@@ -319,26 +321,21 @@ def test_poller_continues_after_battery_failure(
             raise TimeoutError("no response")
         return telemetry
 
-    refresh = app_module.PollerRefresh()
-    refresh.enabled = True
-
-    async def run_one_pass() -> None:
-        task = asyncio.create_task(app_module.run_poller_task(config, repo, refresh))
-        while len(repo.saved) < 1:
-            await asyncio.sleep(0)
-        task.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await task
-
-    monkeypatch.setattr(app_module, "poll_battery", poll)
-    with caplog.at_level(logging.WARNING, logger="monbat.app"):
-        asyncio.run(run_one_pass())
+    monkeypatch.setattr(poller_module, "poll_battery", poll)
+    with caplog.at_level(logging.WARNING, logger="monbat.poller"):
+        with TestClient(build_app(config, repo)) as client:
+            for _ in range(100):
+                client.get('/api/latest')
+                if repo.saved:
+                    break
+            assert repo.saved == [("bat-2", telemetry)]
+            retained = client.get('/api/latest').json()['bat-1']['telemetry']
+            assert retained['timestamp'] == previous.timestamp
 
     assert polled_addresses == [
         "AA:BB:CC:00:00:01",
         "AA:BB:CC:00:00:02",
     ]
-    assert repo.saved == [("bat-2", telemetry)]
     assert "Poll failed for battery bat-1" in caplog.text
 
 
@@ -402,7 +399,7 @@ def test_freshness_independent_of_background(monkeypatch: pytest.MonkeyPatch, ag
 def test_refresh_one_poller_and_shutdown(monkeypatch: pytest.MonkeyPatch) -> None:
     import threading
     clock = [100.0]
-    monkeypatch.setattr(app_module.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(poller_module, "monotonic", lambda: clock[0])
     entered = threading.Event()
     release = threading.Event()
     cancelled = threading.Event()
@@ -426,9 +423,10 @@ def test_refresh_one_poller_and_shutdown(monkeypatch: pytest.MonkeyPatch) -> Non
         finally:
             active -= 1
 
-    monkeypatch.setattr(app_module, "poll_battery", poll)
+    monkeypatch.setattr(poller_module, "poll_battery", poll)
     repo = StubTelemetryRepository()
-    app = build_app(_make_config(poll_interval_seconds=600), repo)
+    config = _make_config(poll_interval_seconds=600)
+    app = build_app(config, repo)
     with TestClient(app) as client:
         assert entered.wait(2)
         assert client.post('/api/refresh').json()['outcome'] == 'skipped'
@@ -456,17 +454,109 @@ def test_refresh_one_poller_and_shutdown(monkeypatch: pytest.MonkeyPatch) -> Non
 
 
 def test_refresh_atomic_admission(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(app_module.time, "monotonic", lambda: 30)
+    from httpx2 import ASGITransport, AsyncClient
+
+    clock = [0.0]
+    monkeypatch.setattr(poller_module, "monotonic", lambda: clock[0])
+    calls: list[str] = []
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def poll(address: str, timeout: float) -> BatteryTelemetry:
+        calls.append(address)
+        if len(calls) > 2:
+            entered.set()
+            await release.wait()
+        return _make_telemetry(1000)
+
+    monkeypatch.setattr(poller_module, "poll_battery", poll)
+    repo = StubTelemetryRepository()
+    config = _make_config(poll_interval_seconds=600)
+    app = build_app(config, repo)
+
     async def scenario() -> None:
-        refresh = app_module.PollerRefresh()
-        refresh.enabled = True
-        refresh.running = False
-        refresh.last_started = 0
-        async def request() -> str:
-            return refresh.request()
-        outcomes = await asyncio.gather(*(request() for _ in range(20)))
-        assert outcomes.count('accepted') == 1
-        assert outcomes.count('skipped') == 19
+        async with app.router.lifespan_context(app):
+            async with AsyncClient(
+                transport=ASGITransport(app), base_url="http://test",
+            ) as client:
+                # Startup is reserved even before the task gets its first turn.
+                assert (await client.post('/api/refresh')).json()['outcome'] == 'skipped'
+                async with asyncio.timeout(2):
+                    while len(repo.saved) < 2:
+                        await asyncio.sleep(0)
+                clock[0] = 30
+                responses = await asyncio.gather(*(
+                    client.post('/api/refresh') for _ in range(20)
+                ))
+                outcomes = [response.json()['outcome'] for response in responses]
+                assert outcomes.count('accepted') == 1
+                assert outcomes.count('skipped') == 19
+                async with asyncio.timeout(2):
+                    await entered.wait()
+                addresses = [battery.address for battery in config.batteries]
+                assert calls == addresses + [addresses[0]]
+        async with AsyncClient(transport=ASGITransport(app), base_url="http://test") as client:
+            assert (await client.post('/api/refresh')).json()['outcome'] == 'disabled'
+
+    asyncio.run(scenario())
+
+
+def test_background_delay_restarts_after_refresh_finishes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from httpx2 import ASGITransport, AsyncClient
+
+    clock = [0.0]
+    monkeypatch.setattr(poller_module, "monotonic", lambda: clock[0])
+    calls = 0
+    refresh_entered = asyncio.Event()
+    release_refresh = asyncio.Event()
+    background_entered = asyncio.Event()
+
+    async def poll(address: str, timeout: float) -> BatteryTelemetry:
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            refresh_entered.set()
+            await release_refresh.wait()
+        if calls == 3:
+            background_entered.set()
+        return _make_telemetry(1000)
+
+    monkeypatch.setattr(poller_module, "poll_battery", poll)
+    config = _make_config(
+        batteries=(BatteryConfig("one", "One", "one"),),
+        poll_interval_seconds=0.1,
+    )
+    repo = StubTelemetryRepository()
+    app = build_app(config, repo)
+
+    async def scenario() -> None:
+        async with app.router.lifespan_context(app):
+            async with AsyncClient(
+                transport=ASGITransport(app), base_url="http://test",
+            ) as client:
+                async with asyncio.timeout(2):
+                    while not repo.saved:
+                        await asyncio.sleep(0)
+                clock[0] = 30
+                assert (await client.post('/api/refresh')).json()['outcome'] == 'accepted'
+                async with asyncio.timeout(2):
+                    await refresh_entered.wait()
+                # Let the original background deadline pass during BLE work.
+                await asyncio.sleep(0.12)
+                assert calls == 2
+                release_refresh.set()
+                async with asyncio.timeout(2):
+                    while len(repo.saved) < 2:
+                        await asyncio.sleep(0)
+                with pytest.raises(TimeoutError):
+                    async with asyncio.timeout(0.03):
+                        await background_entered.wait()
+                async with asyncio.timeout(2):
+                    await background_entered.wait()
+                assert calls == 3
+
     asyncio.run(scenario())
 
 
@@ -476,7 +566,7 @@ def test_background_polling_without_requests(monkeypatch: pytest.MonkeyPatch) ->
         nonlocal calls
         calls += 1
         return _make_telemetry(1000)
-    monkeypatch.setattr(app_module, "poll_battery", poll)
+    monkeypatch.setattr(poller_module, "poll_battery", poll)
     config = _make_config(poll_interval_seconds=0.01)
     with TestClient(build_app(config, StubTelemetryRepository())) as client:
         import time

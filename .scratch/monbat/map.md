@@ -44,6 +44,16 @@ the approved behavior; implementation is still pending.
   when any Battery has missing/stale readings or invalid capacity. Resolved:
   summary API and Dashboard section implemented; 84 offline tests pass.
 
+- **[14 Poller state ownership](issues/14-poller-state-ownership.md)**:
+  Resolved: `poller.py` owns admission and private scheduling state; `app.py`
+  retains configuration and task lifecycle. Behavior unchanged; 85 offline
+  tests pass, including concurrent requests and background delay restart.
+
+- **[15 Prototype retirement and unused code](issues/15-retire-prototypes-and-unused-code.md)**:
+  Resolved: removed superseded Dashboard/BMS prototypes, an unused import,
+  and an unused constant (525 source lines). Historical links preserved;
+  remaining entry points and callers checked; 85 offline tests pass.
+
 ## Not yet specified
 
 - **Iteration 2 historical graphing UI**: Aggregation and downsampling queries over recorded SQLite telemetry, and visual charting presentation (lightweight client-side Chart.js/uPlot vs server-rendered SVG).

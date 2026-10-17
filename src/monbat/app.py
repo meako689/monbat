@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 import math
 import time
 import tomllib
@@ -16,10 +15,9 @@ from typing import Literal
 from fastapi import FastAPI, Query
 from fastapi.responses import HTMLResponse
 
-from monbat.bms import BatteryTelemetry, poll_battery
+from monbat.bms import BatteryTelemetry
 from monbat.db import TelemetryRepository
-
-logger = logging.getLogger(__name__)
+from monbat.poller import Poller
 
 BatteryStatus = Literal[
     "no-reading-yet", "offline", "charging", "discharging", "idle"
@@ -231,59 +229,6 @@ def _cell_delta_mv(telemetry: BatteryTelemetry | None) -> float | None:
     )
 
 
-class PollerRefresh:
-    """Admission state shared by HTTP handlers and the single Poller task."""
-
-    def __init__(self) -> None:
-        self.wake = asyncio.Event()
-        self.running = True  # Startup pass is already reserved.
-        self.enabled = False
-        self.last_started: float | None = None
-
-    def request(self) -> Literal["accepted", "skipped", "disabled"]:
-        # No await: checking and reserving are atomic on the app event loop.
-        if not self.enabled:
-            return "disabled"
-        if self.running or self.wake.is_set():
-            return "skipped"
-        if self.last_started is not None and time.monotonic() - self.last_started < 30:
-            return "skipped"
-        self.wake.set()
-        return "accepted"
-
-
-async def run_poller_task(
-    config: AppConfig, repo: TelemetryRepository, refresh: PollerRefresh,
-) -> None:
-    """Poll sequentially on startup, background timeout, or an admitted refresh."""
-    try:
-        while True:
-            refresh.running = True
-            refresh.wake.clear()
-            refresh.last_started = time.monotonic()
-            for battery in config.batteries:
-                try:
-                    telemetry = await poll_battery(
-                        battery.address, config.poller.timeout_seconds
-                    )
-                    await repo.save_telemetry(battery.id, telemetry)
-                except Exception as exc:
-                    logger.warning(
-                        "Poll failed for battery %s: %s", battery.id, exc,
-                        exc_info=True,
-                    )
-            refresh.running = False
-            try:
-                async with asyncio.timeout(config.poller.poll_interval_seconds):
-                    await refresh.wake.wait()
-            except TimeoutError:
-                pass
-    finally:
-        refresh.enabled = False
-        refresh.running = False
-        refresh.wake.clear()
-
-
 _DASHBOARD_HTML = """<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -480,20 +425,20 @@ def build_app(
 ) -> FastAPI:
     """Build the service around one shared configuration and repository."""
 
-    refresh = PollerRefresh()
+    poller: Poller | None = None
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+        nonlocal poller
         await repo.init_db()
         poller_task: asyncio.Task[None] | None = None
         if start_poller:
-            refresh.running = True
-            refresh.enabled = True
-            poller_task = asyncio.create_task(run_poller_task(config, repo, refresh))
+            poller = Poller(config, repo)
+            poller_task = asyncio.create_task(poller.run())
         try:
             yield
         finally:
-            refresh.enabled = False
+            poller = None
             if poller_task is not None:
                 poller_task.cancel()
                 try:
@@ -509,7 +454,7 @@ def build_app(
 
     @app.post("/api/refresh")
     async def request_refresh() -> dict[str, str]:
-        return {"outcome": refresh.request()}
+        return {"outcome": poller.request_refresh() if poller is not None else "disabled"}
 
     @app.get("/api/latest")
     async def latest() -> dict[str, object]:

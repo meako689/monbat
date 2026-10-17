@@ -247,7 +247,9 @@ Domain language follows the project [GLOSSARY.md](../../GLOSSARY.md):
 * **Framework**: FastAPI with lifespan background Poller task.
 * **App Construction and Lifespan**: `serve()` creates the configured
   `TelemetryRepository` and passes it to `build_app(config, repo)`. The lifespan,
-  Poller, and request handlers use that same instance.
+  Poller, and request handlers use that same repository. The lifespan keeps
+  the active Poller reference for refresh requests and clears it before
+  cancellation. The abbreviated construction example below omits routes.
   ```python
   def build_app(
       config: AppConfig,
@@ -260,7 +262,8 @@ Domain language follows the project [GLOSSARY.md](../../GLOSSARY.md):
           await repo.init_db()
           poller_task: asyncio.Task[None] | None = None
           if start_poller:
-              poller_task = asyncio.create_task(run_poller_task(config, repo))
+              poller = Poller(config, repo)
+              poller_task = asyncio.create_task(poller.run())
           try:
               yield
           finally:
@@ -300,6 +303,13 @@ Domain language follows the project [GLOSSARY.md](../../GLOSSARY.md):
     refresh and fetch stored latest/summary views using native `fetch()`.
 
 ### 4.5 Dashboard-triggered refresh and freshness
+
+The Poller module in `src/monbat/poller.py` owns refresh admission, the wake
+event, and private scheduling state. Its interface is `run()` and
+`request_refresh()`. Configuration types and parsing remain in `app.py`;
+the lifespan creates, cancels, and awaits one Poller task. Request handlers
+never mutate Poller state. A Poller instance reserves its startup pass at
+construction and runs once; each lifespan creates a new instance.
 
 One lifespan-owned Poller performs all BLE passes sequentially. It polls on
 startup, then waits the configured background delay after each pass. An eligible

@@ -14,7 +14,6 @@ import time
 from dataclasses import dataclass
 from typing import Literal
 
-SERVICE_UUID = "0000ffe0-0000-1000-8000-00805f9b34fb"
 TX_NOTIFY_UUID = "0000ffe1-0000-1000-8000-00805f9b34fb"
 RX_WRITE_UUID = "0000ffe2-0000-1000-8000-00805f9b34fb"
 REQUEST_PAYLOAD: bytes = bytes([0x00, 0x00, 0x04, 0x01, 0x13, 0x55, 0xAA, 0x17])

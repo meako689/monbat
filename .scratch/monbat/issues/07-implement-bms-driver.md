@@ -6,7 +6,7 @@ Blocked by: 02, 06
 
 ## Goal
 
-Graduate the validated prototype (`prototype_bms_driver.py`) into the production
+Graduate the validated [prototype](https://github.com/meako689/monbat/blob/66148347d2ecb08324bd2e2299ddcc49f6705c3b/src/monbat/prototype_bms_driver.py) into the production
 `src/monbat/bms.py` module used by the Poller, and add a test suite covering
 both offline payload parsing and a live-hardware integration smoke-test driven
 from `config.toml`.
@@ -66,6 +66,11 @@ from `config.toml`.
 4. `bms.py` exports only the public API; no prototype simulation helpers.
 
 ## Comments
+
+- 2026-10-17: User-authorized cleanup in ticket 15 supersedes this ticket's
+  original prototype-preservation constraint. The redundant prototype and
+  unused `SERVICE_UUID` constant were removed; the service UUID remains
+  documented in spec section 4.2. Parser and live-poll tests remain.
 
 ## Answer
 

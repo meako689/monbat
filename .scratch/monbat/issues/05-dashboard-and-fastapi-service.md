@@ -11,7 +11,7 @@ How should the FastAPI application, lifespan Poller coroutine, self-contained HT
 ## Answer
 
 The Dashboard layout and auto-refresh were prototyped in
-[prototype_dashboard.py](../../src/monbat/prototype_dashboard.py). The
+[prototype_dashboard.py](https://github.com/meako689/monbat/blob/6c99208320fdfb2a008e10648f16b657a5c01f9c/src/monbat/prototype_dashboard.py). The
 implementation contract below also defines how `/api/latest` represents
 batteries that have no stored reading.
 
@@ -45,6 +45,10 @@ batteries that have no stored reading.
    - Vanilla JS auto-refresh loop (`setInterval(updateDashboard, 10000)`) fetching `/api/latest` without external JS dependencies.
 
 ## Comments
+
+- 2026-10-17: Retired the superseded prototype in ticket 15. The link above
+  preserves its last version. Current Dashboard behavior is specified in
+  spec sections 4.4–4.6 and implemented in `src/monbat/app.py`.
 
 - 2026-10-16: Updated the API view contract to include configured battery
   metadata, derive status from current sign and telemetry age, and return
