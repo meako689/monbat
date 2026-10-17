@@ -24,6 +24,14 @@ def _telemetry(
         cell_temp_c=24,
         bms_temp_c=23,
         cell_voltages_v=cell_voltages_v,
+        reported_soc_percent=37.0,
+        soc_source="bms",
+        soh_percent=98.0,
+        cycle_count=123,
+        bms_state_raw=4,
+        bms_state="disabled",
+        protection_flags=4,
+        active_protections=("Overcharge",),
     )
 
 
@@ -123,3 +131,16 @@ def test_cell_voltages_round_trip(tmp_path: Path) -> None:
     assert result is not None
     assert isinstance(result.cell_voltages_v, tuple)
     assert result.cell_voltages_v == expected
+
+
+def test_nullable_health_and_unknown_bits_round_trip(tmp_path: Path) -> None:
+    from dataclasses import replace
+    repo = _repository(tmp_path)
+    telemetry = replace(_telemetry(123), reported_soc_percent=None,
+                        soh_percent=None, soc_source="capacity", bms_state="unknown",
+                        bms_state_raw=42, protection_flags=0x80000000,
+                        active_protections=("Unknown protection bits: 0x80000000",))
+    asyncio.run(repo.init_db())
+    asyncio.run(repo.save_telemetry("bat-1", telemetry))
+    assert asyncio.run(repo.get_latest_telemetry("bat-1")) == telemetry
+    assert asyncio.run(repo.get_history("bat-1", 0)) == [telemetry]

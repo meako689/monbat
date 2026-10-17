@@ -91,6 +91,14 @@ def _make_telemetry(
         cell_temp_c=24,
         bms_temp_c=25,
         cell_voltages_v=cell_voltages_v,
+        reported_soc_percent=37.0,
+        soc_source="bms",
+        soh_percent=98.0,
+        cycle_count=123,
+        bms_state_raw=4,
+        bms_state="disabled",
+        protection_flags=4,
+        active_protections=("Overcharge",),
     )
 
 
@@ -136,6 +144,13 @@ def test_latest_returns_telemetry_and_view_fields(monkeypatch: pytest.MonkeyPatc
     assert battery["status"] == "discharging"
     assert battery["cell_delta_mv"] == 2.0
     assert battery["telemetry"]["current_a"] == -2.0
+    assert battery["telemetry"]["bms_state"] == "disabled"
+    assert battery["telemetry"]["protection_flags"] == 4
+    assert battery["telemetry"]["active_protections"] == ["Overcharge"]
+    assert battery["telemetry"]["cycle_count"] == 123
+    assert battery["telemetry"]["soh_percent"] == 98
+    assert battery["telemetry"]["reported_soc_percent"] == 37
+    assert battery["telemetry"]["soc_source"] == "bms"
     assert battery["telemetry"]["cell_voltages_v"] == [3.28, 3.282, 3.281]
 
 
@@ -190,6 +205,9 @@ def test_history_returns_plain_chronological_list(
     assert isinstance(rows, list)
     assert [row["timestamp"] for row in rows] == [7_000.0, 8_000.0, 9_000.0]
     assert [row["battery_id"] for row in rows] == ["bat-1", "bat-2", "bat-1"]
+    assert rows[0]["bms_state"] == "disabled"
+    assert rows[0]["active_protections"] == ["Overcharge"]
+    assert rows[0]["cycle_count"] == 123
     assert rows[0]["name"] == "Battery 1"
     assert rows[0]["address"] == "AA:BB:CC:00:00:01"
     assert set(repo.history_cutoffs) == {"bat-1", "bat-2"}
@@ -301,15 +319,20 @@ def test_poller_continues_after_battery_failure(
             raise TimeoutError("no response")
         return telemetry
 
-    async def stop_after_pass(_seconds: float) -> None:
-        raise asyncio.CancelledError
+    refresh = app_module.PollerRefresh()
+    refresh.enabled = True
+
+    async def run_one_pass() -> None:
+        task = asyncio.create_task(app_module.run_poller_task(config, repo, refresh))
+        while len(repo.saved) < 1:
+            await asyncio.sleep(0)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
 
     monkeypatch.setattr(app_module, "poll_battery", poll)
-    monkeypatch.setattr(app_module.asyncio, "sleep", stop_after_pass)
-
     with caplog.at_level(logging.WARNING, logger="monbat.app"):
-        with pytest.raises(asyncio.CancelledError):
-            asyncio.run(app_module.run_poller_task(config, repo))
+        asyncio.run(run_one_pass())
 
     assert polled_addresses == [
         "AA:BB:CC:00:00:01",
@@ -327,7 +350,7 @@ def test_dashboard_html_is_self_contained() -> None:
 
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/html")
-    assert "setInterval(updateDashboard, 10000)" in response.text
+    assert "setInterval(updateDashboard, 30000)" in response.text
     assert "updateDashboard();" in response.text
     assert "https://" not in response.text
     assert "http://" not in response.text
@@ -345,3 +368,180 @@ def test_main_dispatches_serve_for_default_and_subcommand(
     monbat.main()
 
     assert calls == ["serve"]
+
+
+@pytest.mark.parametrize("freshness", [0, -1, True, "60", float("inf"), float("nan")])
+def test_invalid_freshness(freshness: object) -> None:
+    raw = {
+        "poller": {"poll_interval_seconds": 600, "timeout_seconds": 10,
+                   "sqlite_path": "test.db", "freshness_seconds": freshness},
+        "server": {"host": "localhost", "port": 8000},
+        "batteries": [{"id": "one", "name": "One", "address": "one"}],
+    }
+    with pytest.raises(ValueError, match="freshness_seconds"):
+        app_module._parse_config(raw)
+
+
+def test_freshness_default_and_discovery() -> None:
+    from monbat.discover import _serialize_config
+    assert 'freshness_seconds = 60' in _serialize_config([])
+    assert _make_config(poll_interval_seconds=600).poller.freshness_seconds == 60
+
+
+@pytest.mark.parametrize("age,status", [(60, "charging"), (60.01, "offline")])
+def test_freshness_independent_of_background(monkeypatch: pytest.MonkeyPatch, age: float, status: str) -> None:
+    monkeypatch.setattr(app_module.time, "time", lambda: 1000)
+    app = build_app(_make_config(poll_interval_seconds=600),
+                    StubTelemetryRepository(latest={"bat-1": _make_telemetry(1000-age)}),
+                    start_poller=False)
+    with TestClient(app) as client:
+        assert client.get('/api/latest').json()['bat-1']['status'] == status
+        assert client.post('/api/refresh').json() == {"outcome": "disabled"}
+
+
+def test_refresh_one_poller_and_shutdown(monkeypatch: pytest.MonkeyPatch) -> None:
+    import threading
+    clock = [100.0]
+    monkeypatch.setattr(app_module.time, "monotonic", lambda: clock[0])
+    entered = threading.Event()
+    release = threading.Event()
+    cancelled = threading.Event()
+    calls: list[str] = []
+    active = 0
+    max_active = 0
+
+    async def poll(address: str, timeout: float) -> BatteryTelemetry:
+        nonlocal active, max_active
+        active += 1
+        max_active = max(max_active, active)
+        calls.append(address)
+        entered.set()
+        try:
+            while not release.is_set():
+                await asyncio.sleep(0)
+            return _make_telemetry(1000)
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+        finally:
+            active -= 1
+
+    monkeypatch.setattr(app_module, "poll_battery", poll)
+    repo = StubTelemetryRepository()
+    app = build_app(_make_config(poll_interval_seconds=600), repo)
+    with TestClient(app) as client:
+        assert entered.wait(2)
+        assert client.post('/api/refresh').json()['outcome'] == 'skipped'
+        assert client.get('/api/latest').status_code == 200
+        release.set()
+        # A request runs on the same event loop after the quick completed pass.
+        for _ in range(100):
+            client.get('/api/latest')
+            if len(repo.saved) == 2:
+                break
+        assert len(repo.saved) == 2
+        clock[0] = 129.99
+        assert client.post('/api/refresh').json()['outcome'] == 'skipped'
+        release.clear()
+        entered.clear()
+        clock[0] = 130
+        assert client.post('/api/refresh').json()['outcome'] == 'accepted'
+        assert entered.wait(2)
+        assert client.post('/api/refresh').json()['outcome'] == 'skipped'
+        assert calls == [_make_config().batteries[0].address,
+                         _make_config().batteries[1].address,
+                         _make_config().batteries[0].address]
+    assert cancelled.is_set()
+    assert max_active == 1
+
+
+def test_refresh_atomic_admission(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(app_module.time, "monotonic", lambda: 30)
+    async def scenario() -> None:
+        refresh = app_module.PollerRefresh()
+        refresh.enabled = True
+        refresh.running = False
+        refresh.last_started = 0
+        async def request() -> str:
+            return refresh.request()
+        outcomes = await asyncio.gather(*(request() for _ in range(20)))
+        assert outcomes.count('accepted') == 1
+        assert outcomes.count('skipped') == 19
+    asyncio.run(scenario())
+
+
+def test_background_polling_without_requests(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = 0
+    async def poll(address: str, timeout: float) -> BatteryTelemetry:
+        nonlocal calls
+        calls += 1
+        return _make_telemetry(1000)
+    monkeypatch.setattr(app_module, "poll_battery", poll)
+    config = _make_config(poll_interval_seconds=0.01)
+    with TestClient(build_app(config, StubTelemetryRepository())) as client:
+        import time
+        deadline = time.perf_counter() + 2
+        while calls < 4 and time.perf_counter() < deadline:
+            client.get('/api/latest')
+        assert calls >= 4
+
+
+def test_bank_summary_weighted_soc_and_signed_power(monkeypatch: pytest.MonkeyPatch) -> None:
+    from dataclasses import replace
+    monkeypatch.setattr(app_module.time, 'time', lambda: 1000)
+    first = replace(_make_telemetry(990), soc_percent=80, capacity_ah=100, power_w=100)
+    second = replace(_make_telemetry(990), soc_percent=20, capacity_ah=200, power_w=-300,
+                     soc_source='capacity', reported_soc_percent=None)
+    repo = StubTelemetryRepository(latest={'bat-1': first, 'bat-2': second})
+    with TestClient(build_app(_make_config(), repo, start_poller=False)) as client:
+        assert client.get('/api/summary').json() == {
+            'available': True, 'soc_percent': 40, 'power_w': -200, 'reason': None,
+        }
+        assert set(client.get('/api/latest').json()) == {'bat-1', 'bat-2'}
+        repo.latest['bat-2'] = replace(second, power_w=-100)
+        assert client.get('/api/summary').json()['power_w'] == 0
+
+
+@pytest.mark.parametrize('scenario,reason', [
+    ('missing', 'missing-reading'), ('stale', 'stale-reading'),
+    ('zero-capacity', 'invalid-capacity'), ('negative-capacity', 'invalid-capacity'),
+])
+def test_bank_summary_unavailable_and_recovers(monkeypatch: pytest.MonkeyPatch,
+                                              scenario: str, reason: str) -> None:
+    from dataclasses import replace
+    monkeypatch.setattr(app_module.time, 'time', lambda: 1000)
+    first = _make_telemetry(940)  # Exact freshness boundary remains available.
+    second: BatteryTelemetry | None = _make_telemetry(940)
+    if scenario == 'missing':
+        second = None
+    elif scenario == 'stale':
+        second = _make_telemetry(939.99)
+    else:
+        second = replace(second, capacity_ah=0 if scenario == 'zero-capacity' else -1)
+    repo = StubTelemetryRepository(latest={'bat-1': first, 'bat-2': second})
+    with TestClient(build_app(_make_config(poll_interval_seconds=600), repo,
+                              start_poller=False)) as client:
+        assert client.get('/api/summary').json() == {
+            'available': False, 'soc_percent': None, 'power_w': None, 'reason': reason,
+        }
+        repo.latest['bat-2'] = first
+        result = client.get('/api/summary').json()
+        assert result['available'] is True
+        assert result['soc_percent'] == 50
+        assert result['reason'] is None
+
+
+def test_bank_summary_reason_precedence() -> None:
+    from dataclasses import replace
+    stale = replace(_make_telemetry(0), capacity_ah=0)
+    assert app_module._bank_summary([None, stale], 60, 1000).reason == 'missing-reading'
+    assert app_module._bank_summary([stale], 60, 1000).reason == 'stale-reading'
+
+
+def test_summary_section_and_single_refresh_timer() -> None:
+    with TestClient(build_app(_make_config(), StubTelemetryRepository(), start_poller=False)) as client:
+        html = client.get('/').text
+    assert html.index('id="bank-summary"') < html.index('id="batteries-grid"')
+    assert "fetch('/api/summary')" in html
+    assert html.count('setInterval(') == 1
+    assert 'role="progressbar"' in html

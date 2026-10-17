@@ -13,14 +13,24 @@ The internal protection and telemetry module inside each Battery, accessible via
 _Avoid_: Controller, firmware, hardware
 
 **Telemetry**:
-A single point-in-time measurement snapshot from a Battery, including pack voltage, current, power in watts, state of charge (SOC), temperatures, and individual cell voltages.
+A single point-in-time snapshot from a Battery, including measurements, effective
+SOC and its source, BMS state, protection flags, SOH, and cycle count.
 _Avoid_: Metrics, stats, data point, sample
 
 **Poller**:
-The background coroutine that connects to each Battery sequentially to request
-and persist Telemetry, then waits the configured delay (default 30 seconds)
-before the next polling pass.
+The single coroutine that connects to each Battery sequentially to request and
+persist Telemetry. It follows a configured background delay and can wake early
+for eligible Dashboard refresh requests.
 _Avoid_: Collector, scraper, monitor worker
+
+**Battery Bank**:
+All configured Batteries connected in parallel at the same nominal voltage.
+Its summary shows capacity-weighted SOC and signed net power when every Battery
+has fresh Telemetry.
+
+**Freshness**:
+The configured maximum Telemetry age for online status and available Battery
+Bank totals, independent of polling intervals.
 
 **Discovery Script**:
 A standalone interactive CLI utility used once to scan for BLE batteries, assign human-readable aliases, and generate configuration.

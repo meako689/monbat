@@ -1,10 +1,12 @@
 # monbat
 
-Local off-grid battery monitoring service for Redodo LiFePO4 batteries over Bluetooth Low Energy (BLE). Linux Mint is the primary deployment target, and macOS is also supported through Bleak. BLE adapter availability and permissions depend on the host operating system.
+Local, offline monitoring for Redodo LiFePO4 Batteries over Bluetooth Low
+Energy. Runs on Linux Mint and macOS. Shows individual Battery Telemetry,
+BMS protections, and parallel Battery Bank SOC and net power.
 
-## Development setup
+## Quick start
 
-Install [`uv`](https://docs.astral.sh/uv/) for your platform, then run:
+Install [uv](https://docs.astral.sh/uv/), then run:
 
 ```sh
 uv sync
@@ -12,8 +14,13 @@ uv run monbat discover
 uv run monbat serve
 ```
 
-`uv sync` creates the project-local `.venv` and provisions a compatible Python runtime. `uv run` runs commands inside that environment without requiring platform-specific activation commands or paths.
+Review the generated `config.toml` before starting the service. Open
+<http://localhost:8000>. Bluetooth access requires a compatible adapter and
+host permissions.
 
-`monbat discover` writes `config.toml` in the current directory. Review the
-generated battery names and server settings, then run `monbat serve` to start
-the Poller and Dashboard. Open <http://localhost:8000> on the same machine.
+## Documentation
+
+- [Configuration and database setup](docs/operations/configuration.md)
+- [Dashboard and refresh behavior](docs/operations/dashboard.md)
+- [BMS protocol and Telemetry](docs/protocol/redodo.md)
+- [Specification and tasks](.scratch/monbat/map.md)

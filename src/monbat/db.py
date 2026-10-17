@@ -7,7 +7,7 @@ import json
 import sqlite3
 from contextlib import closing
 
-from monbat.bms import BatteryTelemetry
+from monbat.bms import BatteryTelemetry, BmsState, SocSource
 
 _CREATE_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS telemetry (
@@ -22,7 +22,15 @@ CREATE TABLE IF NOT EXISTS telemetry (
     capacity_ah REAL NOT NULL,
     cell_temp_c INTEGER NOT NULL,
     bms_temp_c INTEGER NOT NULL,
-    cell_voltages_json TEXT NOT NULL
+    cell_voltages_json TEXT NOT NULL,
+    reported_soc_percent REAL,
+    soc_source TEXT NOT NULL,
+    soh_percent REAL,
+    cycle_count INTEGER NOT NULL,
+    bms_state_raw INTEGER NOT NULL,
+    bms_state TEXT NOT NULL,
+    protection_flags INTEGER NOT NULL,
+    active_protections_json TEXT NOT NULL
 )
 """
 
@@ -96,8 +104,10 @@ class TelemetryRepository:
                     capacity_ah,
                     cell_temp_c,
                     bms_temp_c,
-                    cell_voltages_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    cell_voltages_json, reported_soc_percent, soc_source,
+                    soh_percent, cycle_count, bms_state_raw, bms_state,
+                    protection_flags, active_protections_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     battery_id,
@@ -111,6 +121,14 @@ class TelemetryRepository:
                     telemetry.cell_temp_c,
                     telemetry.bms_temp_c,
                     cell_voltages_json,
+                    telemetry.reported_soc_percent,
+                    telemetry.soc_source,
+                    telemetry.soh_percent,
+                    telemetry.cycle_count,
+                    telemetry.bms_state_raw,
+                    telemetry.bms_state,
+                    telemetry.protection_flags,
+                    json.dumps(telemetry.active_protections),
                 ),
             )
             connection.commit()
@@ -123,7 +141,9 @@ class TelemetryRepository:
                 """
                 SELECT timestamp, voltage_v, current_a, power_w, soc_percent,
                        remaining_ah, capacity_ah, cell_temp_c, bms_temp_c,
-                       cell_voltages_json
+                       cell_voltages_json, reported_soc_percent, soc_source,
+                       soh_percent, cycle_count, bms_state_raw, bms_state,
+                       protection_flags, active_protections_json
                 FROM telemetry
                 WHERE battery_id = ?
                 ORDER BY timestamp DESC, id DESC
@@ -144,7 +164,9 @@ class TelemetryRepository:
                 """
                 SELECT timestamp, voltage_v, current_a, power_w, soc_percent,
                        remaining_ah, capacity_ah, cell_temp_c, bms_temp_c,
-                       cell_voltages_json
+                       cell_voltages_json, reported_soc_percent, soc_source,
+                       soh_percent, cycle_count, bms_state_raw, bms_state,
+                       protection_flags, active_protections_json
                 FROM telemetry
                 WHERE battery_id = ? AND timestamp >= ?
                 ORDER BY timestamp ASC, id ASC
@@ -167,6 +189,14 @@ def _telemetry_from_row(row: sqlite3.Row) -> BatteryTelemetry:
         cell_temp_c=_as_int(row["cell_temp_c"], "cell_temp_c"),
         bms_temp_c=_as_int(row["bms_temp_c"], "bms_temp_c"),
         cell_voltages_v=_decode_cell_voltages(row["cell_voltages_json"]),
+        reported_soc_percent=_optional_float(row["reported_soc_percent"], "reported_soc_percent"),
+        soc_source=_soc_source(row["soc_source"]),
+        soh_percent=_optional_float(row["soh_percent"], "soh_percent"),
+        cycle_count=_as_int(row["cycle_count"], "cycle_count"),
+        bms_state_raw=_as_int(row["bms_state_raw"], "bms_state_raw"),
+        bms_state=_bms_state(row["bms_state"]),
+        protection_flags=_as_int(row["protection_flags"], "protection_flags"),
+        active_protections=_decode_protections(row["active_protections_json"]),
     )
 
 
@@ -197,3 +227,45 @@ def _decode_cell_voltages(value: object) -> tuple[float, ...]:
         cell_voltages.append(float(voltage))
 
     return tuple(cell_voltages)
+
+
+def _optional_float(value: object, column: str) -> float | None:
+    return None if value is None else _as_float(value, column)
+
+
+def _soc_source(value: object) -> SocSource:
+    if value == "bms":
+        return "bms"
+    if value == "capacity":
+        return "capacity"
+    raise ValueError("Invalid soc_source in telemetry database")
+
+
+def _bms_state(value: object) -> BmsState:
+    match value:
+        case "idle":
+            return "idle"
+        case "charging":
+            return "charging"
+        case "discharging":
+            return "discharging"
+        case "disabled":
+            return "disabled"
+        case "unknown":
+            return "unknown"
+        case _:
+            raise ValueError("Invalid bms_state in telemetry database")
+
+
+def _decode_protections(value: object) -> tuple[str, ...]:
+    if not isinstance(value, str):
+        raise ValueError("Invalid active_protections_json in telemetry database")
+    decoded: object = json.loads(value)
+    if not isinstance(decoded, list):
+        raise ValueError("Protections must be stored as a JSON array")
+    protections: list[str] = []
+    for label in decoded:
+        if not isinstance(label, str):
+            raise ValueError("Protection labels must be strings")
+        protections.append(label)
+    return tuple(protections)

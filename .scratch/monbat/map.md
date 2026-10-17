@@ -22,10 +22,34 @@ Technical architecture and implementation specification for `monbat`: an offgrid
 - **[08 Implement SQLite telemetry repository](issues/08-implement-sqlite-repository.md)**: `src/monbat/db.py` — async `TelemetryRepository` with WAL mode, `asyncio.to_thread` operations, direct SOC persistence, and temporary-file unit tests. `Status: resolved`; 9 tests pass.
 - **[09 Implement FastAPI app, Poller & Dashboard](issues/09-implement-fastapi-app-and-poller.md)**: Implemented `src/monbat/app.py` with FastAPI lifespan Poller, config-enriched `/api/latest`, chronological plain-list `/api/history`, and the self-contained Dashboard; wired `serve`, updated dependencies/lockfile and README. `Status: resolved`; `uv run pytest tests/test_app.py -v` passed (17 tests). Ticket 10 is now unblocked.
 
+## Approved tasks — 2026-10-17
+
+The user confirmed this scope after grilling. The [spec](spec.md) includes
+the approved behavior; implementation is still pending.
+
+- **[11 Dashboard-triggered refresh and freshness](issues/11-dashboard-triggered-refresh-and-freshness.md)**:
+  One sequential Poller, async page requests every 30 seconds, no duplicate
+  queued passes, configured background timing retained, and independent
+  `freshness_seconds` (default 60) for all scenarios. Resolved: refresh endpoint,
+  event-driven Poller, Dashboard cadence, config and discovery implemented;
+  77 offline tests pass.
+- **[13 Complete protocol and health Telemetry](issues/13-complete-bms-protocol-and-health-telemetry.md)**:
+  Apply the pinned public decoder's frame handling and field widths; include
+  protections, BMS state, SOC, SOH, and cycle count through storage/API/UI.
+  Reported SOC wins; capacity-derived SOC is a fallback. Fresh schema with no
+  historical migration. Resolved: driver, fresh schema, API, Dashboard, and
+  prototype updated; 65 offline tests pass. Live hardware remains unverified.
+- **[12 Parallel Battery Bank summary](issues/12-parallel-battery-bank-summary.md)**:
+  Capacity-weighted effective SOC and one signed net watts value. Hide totals
+  when any Battery has missing/stale readings or invalid capacity. Resolved:
+  summary API and Dashboard section implemented; 84 offline tests pass.
+
 ## Not yet specified
 
 - **Iteration 2 historical graphing UI**: Aggregation and downsampling queries over recorded SQLite telemetry, and visual charting presentation (lightweight client-side Chart.js/uPlot vs server-rendered SVG).
-- **Multi-battery aggregate bank state**: Algorithms for combining metrics across both batteries (total bank power in watts, net current, aggregate SOC %, combined capacity, time-to-empty / time-to-full estimates).
+- **Additional Battery Bank metrics**: Net current, combined capacity display,
+  and time-to-empty/time-to-full estimates. Parallel SOC and net watts are
+  specified in ticket 12.
 - **Alerts & health thresholds**: Rules and notification hooks for low SOC, cell voltage delta/imbalance, high/low temperature cutoffs, or consecutive BLE read timeouts.
 - **Service daemonization**: Linux systemd user service unit configuration for headless background execution on Linux Mint laptop boot.
 
@@ -34,3 +58,5 @@ Technical architecture and implementation specification for `monbat`: an offgrid
 - Cloud synchronization, remote MQTT brokers, or Home Assistant integration (ruled out: strictly local personal service).
 - Inverter or Solar Charge Controller (MPPT) communication (ruled out: strictly Redodo battery BMS).
 - BMS parameter writing, cell balancing overrides, or firmware modifications (ruled out: strictly read-only telemetry monitoring).
+- Balancing-state research or reverse-engineering follow-up (explicitly omitted
+  on 2026-10-17; the reviewed decoder provides no separate balancing state).

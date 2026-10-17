@@ -142,6 +142,7 @@ def _serialize_config(batteries: list[_SelectedBattery]) -> str:
         "[poller]",
         "poll_interval_seconds = 30",
         "timeout_seconds = 10.0",
+        "freshness_seconds = 60",
         'sqlite_path = "monbat.db"',
         "",
         "[server]",

@@ -4,7 +4,14 @@
 
 `monbat` is a lightweight, local battery monitoring service for a home offgrid power bank composed of two (2) Bluetooth-enabled Redodo LiFePO4 batteries. Linux Mint is the primary deployment target; macOS is also supported for development and operation through Bleak's CoreBluetooth backend. Both platforms require a compatible BLE adapter and operating-system permissions.
 
-The system connects over Bluetooth Low Energy (BLE), polls each battery sequentially, then waits a configurable delay (30 seconds by default) before the next polling pass. It stores time-series readings in a local SQLite database in Write-Ahead Logging (WAL) mode and serves an offgrid-ready dashboard via FastAPI.
+The system uses one sequential BLE Poller with a configurable background delay
+(30 seconds by default; the user's deployment uses 10 minutes). Dashboard
+updates every 30 seconds can wake that Poller asynchronously. It stores
+Telemetry in SQLite WAL mode and serves an offline Dashboard with a parallel
+Battery Bank summary.
+
+This spec includes implemented work in tickets 11–13. Earlier resolved tickets record the previous
+implementation.
 
 ---
 
@@ -27,8 +34,14 @@ Domain language follows the project [GLOSSARY.md](../../GLOSSARY.md):
 
 * **Battery**: A physical offgrid LiFePO4 battery pack equipped with an internal BLE BMS.
 * **BMS**: Battery Management System communicating via GATT service `0xFFE0`.
-* **Telemetry**: Immutable point-in-time snapshot of battery metrics (pack voltage, net current, power, SOC %, remaining/total Ah, temperatures, cell voltages).
-* **Poller**: Async background task querying each Battery sequentially, then waiting the configured delay (30 seconds by default) before the next pass.
+* **Telemetry**: Immutable snapshot of measurements, effective SOC and its source,
+  BMS state, protection flags, SOH, and cycle count.
+* **Poller**: One async task querying Batteries sequentially on a background
+  schedule or an eligible Dashboard refresh request.
+* **Battery Bank**: Every configured Battery connected in parallel at the same
+  nominal voltage; summary SOC is capacity-weighted and power is net signed watts.
+* **Freshness**: Maximum age of Telemetry for online status and available totals,
+  configured independently of polling intervals.
 * **Discovery Script**: Interactive one-off CLI (`monbat discover`) to scan, select, and assign friendly aliases.
 * **Dashboard**: Web UI served by FastAPI displaying real-time metrics. Historical charge/discharge graphs are planned for Iteration 2.
 
@@ -51,6 +64,7 @@ Domain language follows the project [GLOSSARY.md](../../GLOSSARY.md):
   [poller]
   poll_interval_seconds = 30
   timeout_seconds = 10.0
+  freshness_seconds = 60
   sqlite_path = "monbat.db"
 
   [server]
@@ -67,7 +81,10 @@ Domain language follows the project [GLOSSARY.md](../../GLOSSARY.md):
   name = "Battery 2 (Lower)"
   address = "AA:BB:CC:44:55:66"
   ```
-  `poll_interval_seconds` is the delay after a complete sequential polling pass.
+  `poll_interval_seconds` is the background delay after a complete sequential
+  polling pass. Preserve configured values, including 600 seconds.
+  `freshness_seconds` defaults to 60 when absent and must be finite and positive.
+  It applies to every scenario; Dashboard cadence is fixed at 30 seconds.
 * **Parsing & Writing**:
   * Read via Python standard library `tomllib`.
   * Written via a lightweight internal serializer without external YAML/TOML writer dependencies.
@@ -84,18 +101,51 @@ Domain language follows the project [GLOSSARY.md](../../GLOSSARY.md):
   * Request packet: `bytes([0x00, 0x00, 0x04, 0x01, 0x13, 0x55, 0xAA, 0x17])` (8 bytes)
 
 * **Polling Lifecycle**:
-  1. Sequential poll-and-disconnect: Connects to Battery 1, registers notifications on `TX`, writes 8-byte request to `RX`, awaits 66-byte payload, unregisters notifications, and disconnects. Repeats for Battery 2.
+  1. Sequential poll-and-disconnect: Connect, register notifications, send the
+     existing status request, await a complete framed response, unregister,
+     and disconnect. Repeat for each Battery.
   2. Avoids adapter issues that can occur with concurrent connections; on Linux this also avoids BlueZ adapter lockups and connection limits.
-  3. Chunk buffer: Gathers notification chunks into a `bytearray` to guard against BLE MTU fragmentation.
+  3. Gather chunks into a bounded buffer (512 bytes). Find the response marker
+     `01 93 55 AA` at frame offset 3 and realign past stale prefix bytes. The
+     unsigned length byte at offset 2 gives total frame size as `length + 4`;
+     upstream's `0x65` capture is 105 bytes. Complete only at the declared size.
+     Validate identity, field coverage, length, and checksum; derive response
+     checksum behavior from the pinned fixture rather than assuming it matches
+     command framing. Reject malformed frames without replacing good Telemetry.
 
 * **Payload Layout (Little-Endian `<`)**:
-  * Byte 12 (`<I`): Pack voltage (mV / 1000.0)
+  * Byte 12 (`<H`): Pack voltage (mV / 1000.0)
   * Bytes 16..47 (`<16H`): Up to 16 individual cell voltages (mV / 1000.0; non-zero entries kept)
   * Byte 48 (`<i`): Net current (mA / 1000.0; positive = charge, negative = discharge)
   * Byte 52 (`<h`): Cell temperature (°C)
   * Byte 54 (`<h`): BMS internal temperature (°C)
   * Byte 62 (`<H`): Remaining capacity (centi-Ah / 100.0)
-  * Byte 64 (`<H`): Total capacity (centi-Ah / 100.0)
+  * Byte 64 (`<I`): Full charge capacity (centi-Ah / 100.0)
+  * Byte 76 (`<I`): Protection bitmask used by the reference decoder. Its prose
+    describes an 8-byte protection region; semantics of bytes 80–83 are unknown.
+  * Byte 88 (`<H`): Raw BMS state: 0 idle, 1 charging, 2 discharging, 4 disabled;
+    other values remain explicitly unknown.
+  * Byte 90 (`<H`): Reported SOC (%)
+  * Byte 92 (`<I`): SOH (%)
+  * Byte 96 (`<I`): Cycle count
+
+* **Protection masks**:
+
+  | Mask | Active protection |
+  |---|---|
+  | `0x00000004` | Overcharge |
+  | `0x00000020` | Over-discharge |
+  | `0x00000040` | Charging overcurrent |
+  | `0x00000080` | Discharging overcurrent |
+  | `0x00000100` | High temperature while charging |
+  | `0x00000200` | High temperature while discharging |
+  | `0x00000400` | Low temperature while charging |
+  | `0x00000800` | Low temperature while discharging |
+  | `0x00004000` | Short circuit |
+
+  Preserve the raw mask and display unknown set bits as unknown protections.
+  These are BMS-reported active states, distinct from communication errors or
+  locally calculated threshold alerts. No separate balancing state is established.
 
 * **Telemetry Dataclass**:
   ```python
@@ -111,7 +161,34 @@ Domain language follows the project [GLOSSARY.md](../../GLOSSARY.md):
       cell_temp_c: int
       bms_temp_c: int
       cell_voltages_v: tuple[float, ...]
+      reported_soc_percent: float | None
+      soc_source: Literal["bms", "capacity"]
+      soh_percent: float | None
+      cycle_count: int
+      bms_state_raw: int
+      bms_state: Literal["idle", "charging", "discharging", "disabled", "unknown"]
+      protection_flags: int
+      active_protections: tuple[str, ...]
   ```
+
+  `soc_percent` uses valid reported SOC (0–100 inclusive), including 0%.
+  When unavailable, use the existing bounded remaining/full-capacity
+  calculation and set `soc_source="capacity"`. Record unavailable reported SOC
+  or SOH as null; an invalid frame is a failed poll, not a fallback reading.
+  Keep signed `power_w = voltage_v * current_a`.
+
+* **Protocol sources**, pinned to upstream commit
+  `4534382d00702e14199e2a2aaab50180cf0878ac`:
+  * [Protocol notes](https://github.com/mkeguy106/bmsmon/blob/4534382d00702e14199e2a2aaab50180cf0878ac/CLAUDE.md)
+  * [Current decoder](https://github.com/mkeguy106/bmsmon/blob/4534382d00702e14199e2a2aaab50180cf0878ac/android/app/src/main/java/dev/joely/bmsmon/ble/BmsProtocol.kt)
+  * [Field layout](https://github.com/mkeguy106/bmsmon/blob/4534382d00702e14199e2a2aaab50180cf0878ac/android/app/src/main/java/dev/joely/bmsmon/ble/profile/BatteryProfile.kt)
+  * [Captured response and cases](https://github.com/mkeguy106/bmsmon/blob/4534382d00702e14199e2a2aaab50180cf0878ac/android/app/src/test/java/dev/joely/bmsmon/BmsProtocolTest.kt)
+
+  Prefer the current decoder over upstream's legacy CLI. Its fixture covers a
+  12 V/4S Battery; our driver must support the existing 24 V/8S Batteries.
+  This task uses the existing status command; no new commands or connection
+  architecture are needed. Historical parser compatibility and balancing
+  research are outside the approved scope.
 
 ---
 
@@ -136,7 +213,15 @@ Domain language follows the project [GLOSSARY.md](../../GLOSSARY.md):
       capacity_ah REAL NOT NULL,
       cell_temp_c INTEGER NOT NULL,
       bms_temp_c INTEGER NOT NULL,
-      cell_voltages_json TEXT NOT NULL
+      cell_voltages_json TEXT NOT NULL,
+      reported_soc_percent REAL,
+      soc_source TEXT NOT NULL,
+      soh_percent REAL,
+      cycle_count INTEGER NOT NULL,
+      bms_state_raw INTEGER NOT NULL,
+      bms_state TEXT NOT NULL,
+      protection_flags INTEGER NOT NULL,
+      active_protections_json TEXT NOT NULL
   );
 
   CREATE INDEX IF NOT EXISTS idx_telemetry_battery_time 
@@ -151,6 +236,9 @@ Domain language follows the project [GLOSSARY.md](../../GLOSSARY.md):
     `asyncio.to_thread`; the worker opens and closes its own connection.
   * Persist `BatteryTelemetry.soc_percent` exactly as provided. The repository
     does not derive, normalize, or otherwise transform it on save or read.
+  * Start with a fresh schema for ticket 13; historical migrations and old schema
+    compatibility are waived. Document a fresh database path. Startup must not
+    silently delete an existing database. Persist and read every new field.
 
 ---
 
@@ -192,12 +280,15 @@ Domain language follows the project [GLOSSARY.md](../../GLOSSARY.md):
     optional Telemetry object, a status, and optional cell delta. Match each
     configured battery ID to the database `battery_id`. When no reading exists,
     retain the view object with `telemetry: null` and `no-reading-yet` status.
-    Mark a reading `offline` when its timestamp is older than twice the
-    configured poll interval; otherwise derive `charging`, `discharging`, or
+    Mark a reading `offline` when its age exceeds `freshness_seconds`;
+    otherwise derive `charging`, `discharging`, or
     `idle` from current. Calculate cell delta in mV from the cell voltage
     extrema, with `null` when no cell values exist. These status and delta
     fields belong to the API view and are not persisted. Serialize Telemetry
-    with `dataclasses.asdict`.
+    with `dataclasses.asdict`. Display explicit BMS state separately, including
+    Disabled/Unknown, plus active protections and secondary SOH/cycle count.
+  * `POST /api/refresh`: Requests a Poller pass; see section 4.5.
+  * `GET /api/summary`: Returns the parallel Battery Bank summary; see section 4.6.
   * `GET /api/history?hours=24`: Returns a plain chronological JSON list of
     time-series rows, each tagged with battery ID, configured name and address,
     and Telemetry fields. `hours` must be positive. This is part of the
@@ -205,7 +296,53 @@ Domain language follows the project [GLOSSARY.md](../../GLOSSARY.md):
 * **Offgrid-Ready UI Architecture**:
   * **100% Offline**: Zero external CDNs, zero web fonts, zero third-party script tags.
   * **Pure CSS Grid Theme**: Responsive multi-card layout with state-of-charge bars, color-coded charge/discharge metrics, cell voltage chips, and delta imbalance indicators.
-  * **Vanilla JavaScript Refresh**: `setInterval(updateDashboard, 10000)` polling `/api/latest` via native `fetch()`.
+  * **Vanilla JavaScript Refresh**: On load and every 30 seconds, request a
+    refresh and fetch stored latest/summary views using native `fetch()`.
+
+### 4.5 Dashboard-triggered refresh and freshness
+
+One lifespan-owned Poller performs all BLE passes sequentially. It polls on
+startup, then waits the configured background delay after each pass. An eligible
+Dashboard request wakes it early; finishing that pass restarts the background
+delay. Background collection continues with no Dashboard open.
+
+`POST /api/refresh` returns promptly with an `outcome` of `accepted`, `skipped`,
+or `disabled`. Acceptance schedules work; it does not promise a successful
+reading. Skip requests during a pass, while a pass is already scheduled, or when
+less than 30 seconds have elapsed since the last pass started. Skip without a
+pending retry. Use monotonic time and atomic admission so multiple tabs cannot
+schedule duplicates. With `start_poller=False`, report `disabled`.
+
+Page load and each 30-second update send the refresh request and fetch stored
+Telemetry without waiting for BLE completion. New readings appear on a later
+update. A failed request retains the cards and reports a connection failure.
+No endpoint creates its own BLE task. Shutdown cancels and awaits the Poller.
+
+Freshness uses Telemetry timestamps and wall time: `age > freshness_seconds`
+means offline; equality is still fresh. Use the same configured setting for
+Battery views and Battery Bank summaries, independently of background timing.
+Failed polls retain the original timestamp of the last successful Telemetry.
+
+### 4.6 Parallel Battery Bank summary
+
+Treat every configured Battery as part of one parallel Battery Bank at the same
+nominal voltage. The Dashboard section above Battery cards shows one SOC charge
+bar and one signed net power value with Charging/Discharging/Idle labeling.
+
+- SOC = `sum(soc_percent * capacity_ah) / sum(capacity_ah)`, using effective SOC
+  chosen by the driver and full charge capacity as the weight.
+- Power = `sum(power_w)`; positive means charging, negative means discharging,
+  zero means idle. Round for display only.
+- Require fresh Telemetry and positive capacity from every configured Battery.
+  Otherwise display an unavailable summary with no numeric totals or filled
+  charge bar. Individual cards retain their last readings.
+
+`GET /api/summary` returns `available`, nullable `soc_percent` and `power_w`,
+and nullable `reason`. Missing readings take precedence over stale readings,
+then invalid capacity: `missing-reading`, `stale-reading`, `invalid-capacity`.
+When unavailable both totals are null. This endpoint reads stored Telemetry;
+the Dashboard uses its existing 30-second update cycle, with no additional BLE
+timer. A summary fetch failure shows unavailable totals.
 
 ---
 
@@ -216,9 +353,11 @@ Domain language follows the project [GLOSSARY.md](../../GLOSSARY.md):
    * Bleak BMS driver with little-endian parsing.
    * SQLite repository with WAL mode.
    * Single-process FastAPI app with background Poller and real-time offline Dashboard.
+   * Approved follow-up: Dashboard-triggered refresh and independent freshness
+     (11), parallel SOC/net watts (12), and complete protocol/health fields (13).
 2. **Iteration 2 (Visual Charting)**:
    * Historical charge/discharge graphs (client-side SVG / uPlot / Chart.js embedded locally) utilizing the `/api/history` endpoint.
-3. **Iteration 3 (Bank Aggregation & Alerts)**:
-   * Combined battery bank power, aggregate SOC, and net current calculations.
+3. **Iteration 3 (Additional Bank Metrics & Alerts)**:
+   * Net current and optional time-to-empty/time-to-full calculations.
    * System health alerts (low cell voltage, high temperature cutoffs).
    * Linux systemd user service packaging (`monbat.service`).

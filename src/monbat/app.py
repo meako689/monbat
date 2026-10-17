@@ -31,6 +31,7 @@ class PollerConfig:
     poll_interval_seconds: float
     timeout_seconds: float
     sqlite_path: str
+    freshness_seconds: float = 60.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,6 +61,36 @@ class BatteryLatestView:
     telemetry: BatteryTelemetry | None
     status: BatteryStatus
     cell_delta_mv: float | None
+
+
+SummaryReason = Literal["missing-reading", "stale-reading", "invalid-capacity"]
+
+
+@dataclass(frozen=True, slots=True)
+class BatteryBankSummary:
+    available: bool
+    soc_percent: float | None
+    power_w: float | None
+    reason: SummaryReason | None
+
+
+def _bank_summary(
+    readings: list[BatteryTelemetry | None], freshness_seconds: float, now: float,
+) -> BatteryBankSummary:
+    if not readings or any(reading is None for reading in readings):
+        return BatteryBankSummary(False, None, None, "missing-reading")
+    telemetry = [reading for reading in readings if reading is not None]
+    if any(now - reading.timestamp > freshness_seconds for reading in telemetry):
+        return BatteryBankSummary(False, None, None, "stale-reading")
+    if any(reading.capacity_ah <= 0 for reading in telemetry):
+        return BatteryBankSummary(False, None, None, "invalid-capacity")
+    capacity = sum(reading.capacity_ah for reading in telemetry)
+    return BatteryBankSummary(
+        True,
+        sum(reading.soc_percent * reading.capacity_ah for reading in telemetry) / capacity,
+        sum(reading.power_w for reading in telemetry),
+        None,
+    )
 
 
 def _require_table(value: object, path: str) -> dict[str, object]:
@@ -116,6 +147,9 @@ def _parse_config(value: object) -> AppConfig:
         timeout_seconds=_require_positive_float(
             _require_value(poller_table, "timeout_seconds", "poller"),
             "poller.timeout_seconds",
+        ),
+        freshness_seconds=_require_positive_float(
+            poller_table.get("freshness_seconds", 60.0), "poller.freshness_seconds"
         ),
         sqlite_path=_require_string(
             _require_value(poller_table, "sqlite_path", "poller"),
@@ -174,12 +208,12 @@ def _load_config(path: str = "config.toml") -> AppConfig:
 
 def _status_for(
     telemetry: BatteryTelemetry | None,
-    poll_interval_seconds: float,
+    freshness_seconds: float,
     now: float,
 ) -> BatteryStatus:
     if telemetry is None:
         return "no-reading-yet"
-    if now - telemetry.timestamp > 2 * poll_interval_seconds:
+    if now - telemetry.timestamp > freshness_seconds:
         return "offline"
     if telemetry.current_a > 0:
         return "charging"
@@ -197,23 +231,57 @@ def _cell_delta_mv(telemetry: BatteryTelemetry | None) -> float | None:
     )
 
 
-async def run_poller_task(config: AppConfig, repo: TelemetryRepository) -> None:
-    """Poll each configured Battery sequentially, then wait for the next pass."""
-    while True:
-        for battery in config.batteries:
+class PollerRefresh:
+    """Admission state shared by HTTP handlers and the single Poller task."""
+
+    def __init__(self) -> None:
+        self.wake = asyncio.Event()
+        self.running = True  # Startup pass is already reserved.
+        self.enabled = False
+        self.last_started: float | None = None
+
+    def request(self) -> Literal["accepted", "skipped", "disabled"]:
+        # No await: checking and reserving are atomic on the app event loop.
+        if not self.enabled:
+            return "disabled"
+        if self.running or self.wake.is_set():
+            return "skipped"
+        if self.last_started is not None and time.monotonic() - self.last_started < 30:
+            return "skipped"
+        self.wake.set()
+        return "accepted"
+
+
+async def run_poller_task(
+    config: AppConfig, repo: TelemetryRepository, refresh: PollerRefresh,
+) -> None:
+    """Poll sequentially on startup, background timeout, or an admitted refresh."""
+    try:
+        while True:
+            refresh.running = True
+            refresh.wake.clear()
+            refresh.last_started = time.monotonic()
+            for battery in config.batteries:
+                try:
+                    telemetry = await poll_battery(
+                        battery.address, config.poller.timeout_seconds
+                    )
+                    await repo.save_telemetry(battery.id, telemetry)
+                except Exception as exc:
+                    logger.warning(
+                        "Poll failed for battery %s: %s", battery.id, exc,
+                        exc_info=True,
+                    )
+            refresh.running = False
             try:
-                telemetry = await poll_battery(
-                    battery.address, config.poller.timeout_seconds
-                )
-                await repo.save_telemetry(battery.id, telemetry)
-            except Exception as exc:
-                logger.warning(
-                    "Poll failed for battery %s: %s",
-                    battery.id,
-                    exc,
-                    exc_info=True,
-                )
-        await asyncio.sleep(config.poller.poll_interval_seconds)
+                async with asyncio.timeout(config.poller.poll_interval_seconds):
+                    await refresh.wake.wait()
+            except TimeoutError:
+                pass
+    finally:
+        refresh.enabled = False
+        refresh.running = False
+        refresh.wake.clear()
 
 
 _DASHBOARD_HTML = """<!DOCTYPE html>
@@ -251,6 +319,8 @@ _DASHBOARD_HTML = """<!DOCTYPE html>
     .chips { display:flex; flex-wrap:wrap; gap:.45rem; }
     .chip { padding:.2rem .4rem; background:#252b33; border-radius:4px; font: .8rem ui-monospace,monospace; }
     .empty { color:var(--muted); }
+    .protections { color:var(--red); border:1px solid var(--red); padding:.8rem; border-radius:7px; }
+    .bms-state { color:var(--muted); font-size:.85rem; }
     @media (max-width:520px) { body { padding:1rem; } header { align-items:flex-start; flex-direction:column; } }
   </style>
 </head>
@@ -259,8 +329,13 @@ _DASHBOARD_HTML = """<!DOCTYPE html>
     <h1>monbat</h1>
     <div id="connection-status" role="status">Loading battery readings…</div>
   </header>
+  <section class="card" id="bank-summary" aria-label="Parallel Battery Bank" aria-live="polite" style="margin-bottom:1rem">
+    <div class="card-title">Battery Bank · Parallel</div>
+    <div class="empty">Fresh readings from all Batteries are required.</div>
+  </section>
   <main class="grid" id="batteries-grid" aria-live="polite"></main>
   <script>
+    const bankSummary = document.getElementById('bank-summary');
     const grid = document.getElementById('batteries-grid');
     const connectionStatus = document.getElementById('connection-status');
     const statusLabels = {
@@ -270,6 +345,12 @@ _DASHBOARD_HTML = """<!DOCTYPE html>
       discharging: 'Discharging',
       idle: 'Idle'
     };
+
+    function escapeText(value) {
+      const text = document.createElement('span');
+      text.textContent = String(value);
+      return text.innerHTML;
+    }
 
     function renderBattery(view) {
       const label = statusLabels[view.status] || view.status;
@@ -284,6 +365,13 @@ _DASHBOARD_HTML = """<!DOCTYPE html>
       }
 
       const telemetry = view.telemetry;
+      const bmsLabel = telemetry.bms_state === 'unknown'
+        ? `Unknown (${telemetry.bms_state_raw})`
+        : telemetry.bms_state.charAt(0).toUpperCase() + telemetry.bms_state.slice(1);
+      const protections = telemetry.active_protections.length
+        ? `<section class="protections" role="status"><strong>Active BMS protections</strong><ul>${telemetry.active_protections.map(label => `<li>${escapeText(label)}</li>`).join('')}</ul></section>`
+        : '<div class="bms-state">No active BMS protections reported</div>';
+      const soh = telemetry.soh_percent === null ? '—' : `${telemetry.soh_percent.toFixed(0)}%`;
       const currentClass = telemetry.current_a > 0 ? 'charge' : (telemetry.current_a < 0 ? 'discharge' : '');
       const currentSign = telemetry.current_a > 0 ? '+' : '';
       const powerSign = telemetry.power_w > 0 ? '+' : '';
@@ -299,6 +387,8 @@ _DASHBOARD_HTML = """<!DOCTYPE html>
             <div><div class="card-title">${view.name}</div><div class="address">${view.address}</div></div>
             <span class="badge ${view.status}">${label}</span>
           </div>
+          <div class="bms-state">BMS state: ${escapeText(bmsLabel)}</div>
+          ${protections}
           <section>
             <div class="soc-row"><span>State of charge</span><span>${telemetry.soc_percent.toFixed(1)}%</span></div>
             <div class="progress"><div class="progress-fill" style="width:${stateOfCharge}%"></div></div>
@@ -311,6 +401,7 @@ _DASHBOARD_HTML = """<!DOCTYPE html>
             <div><span class="metric-label">Cell temperature</span><span class="metric-value">${telemetry.cell_temp_c} °C</span></div>
             <div><span class="metric-label">BMS temperature</span><span class="metric-value">${telemetry.bms_temp_c} °C</span></div>
           </section>
+          <div class="bms-state">SOH: ${soh} · Cycles: ${telemetry.cycle_count} · SOC source: ${telemetry.soc_source === 'bms' ? 'BMS' : 'Capacity estimate'}</div>
           <section class="cells">
             <div class="cells-header"><span>Cell voltages (${telemetry.cell_voltages_v.length})</span><span>Δ ${delta} mV</span></div>
             <div class="chips">${cells || '<span class="empty">No cell voltages</span>'}</div>
@@ -322,19 +413,59 @@ _DASHBOARD_HTML = """<!DOCTYPE html>
       grid.innerHTML = Object.values(views).map(renderBattery).join('');
     }
 
-    async function updateDashboard() {
+    function renderSummary(summary) {
+      if (!summary.available) {
+        const reason = summary.reason === 'invalid-capacity'
+          ? 'Valid capacity from all Batteries is required.'
+          : 'Fresh readings from all Batteries are required.';
+        bankSummary.innerHTML = `<div class="card-title">Battery Bank · Parallel</div><div class="empty">${reason}</div>`;
+        return;
+      }
+      const soc = summary.soc_percent;
+      const power = summary.power_w;
+      const state = power > 0 ? 'Charging' : power < 0 ? 'Discharging' : 'Idle';
+      const powerClass = power > 0 ? 'charge' : power < 0 ? 'discharge' : '';
+      bankSummary.innerHTML = `
+        <div class="card-header"><div class="card-title">Battery Bank · Parallel</div>
+          <span class="metric-value ${powerClass}">${state} · ${power > 0 ? '+' : ''}${power.toFixed(1)} W</span></div>
+        <div><div class="soc-row"><span>State of charge</span><span>${soc.toFixed(1)}%</span></div>
+          <div class="progress" role="progressbar" aria-label="Battery Bank state of charge" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${soc}">
+            <div class="progress-fill" style="width:${Math.min(100, Math.max(0, soc))}%"></div>
+          </div></div>`;
+    }
+
+    async function updateSummary() {
       try {
-        const response = await fetch('/api/latest');
-        if (!response.ok) throw new Error('Dashboard request failed');
-        renderDashboard(await response.json());
-        connectionStatus.textContent = `Updated ${new Date().toLocaleTimeString()}`;
+        const response = await fetch('/api/summary');
+        if (!response.ok) throw new Error('Summary request failed');
+        renderSummary(await response.json());
+        return true;
       } catch (_error) {
+        renderSummary({available: false, reason: 'stale-reading'});
+        return false;
+      }
+    }
+
+    async function updateDashboard() {
+      const summaryUpdate = updateSummary();
+      try {
+        const [refreshResponse, response] = await Promise.all([
+          fetch('/api/refresh', {method: 'POST'}),
+          fetch('/api/latest')
+        ]);
+        if (!refreshResponse.ok || !response.ok) throw new Error('Dashboard request failed');
+        renderDashboard(await response.json());
+        const summaryOk = await summaryUpdate;
+        connectionStatus.textContent = summaryOk
+          ? `Updated ${new Date().toLocaleTimeString()}` : 'Bank summary unavailable';
+      } catch (_error) {
+        await summaryUpdate;
         connectionStatus.textContent = 'Connection paused';
       }
     }
 
     updateDashboard();
-    setInterval(updateDashboard, 10000);
+    setInterval(updateDashboard, 30000);
   </script>
 </body>
 </html>
@@ -349,15 +480,20 @@ def build_app(
 ) -> FastAPI:
     """Build the service around one shared configuration and repository."""
 
+    refresh = PollerRefresh()
+
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         await repo.init_db()
         poller_task: asyncio.Task[None] | None = None
         if start_poller:
-            poller_task = asyncio.create_task(run_poller_task(config, repo))
+            refresh.running = True
+            refresh.enabled = True
+            poller_task = asyncio.create_task(run_poller_task(config, repo, refresh))
         try:
             yield
         finally:
+            refresh.enabled = False
             if poller_task is not None:
                 poller_task.cancel()
                 try:
@@ -371,6 +507,10 @@ def build_app(
     async def dashboard() -> HTMLResponse:
         return HTMLResponse(_DASHBOARD_HTML)
 
+    @app.post("/api/refresh")
+    async def request_refresh() -> dict[str, str]:
+        return {"outcome": refresh.request()}
+
     @app.get("/api/latest")
     async def latest() -> dict[str, object]:
         now = time.time()
@@ -382,12 +522,20 @@ def build_app(
                 address=battery.address,
                 telemetry=telemetry,
                 status=_status_for(
-                    telemetry, config.poller.poll_interval_seconds, now
+                    telemetry, config.poller.freshness_seconds, now
                 ),
                 cell_delta_mv=_cell_delta_mv(telemetry),
             )
             result[battery.id] = asdict(view)
         return result
+
+    @app.get("/api/summary")
+    async def summary() -> BatteryBankSummary:
+        readings = [
+            await repo.get_latest_telemetry(battery.id)
+            for battery in config.batteries
+        ]
+        return _bank_summary(readings, config.poller.freshness_seconds, time.time())
 
     @app.get("/api/history")
     async def history(
