@@ -312,6 +312,17 @@ _DASHBOARD_HTML = """<!DOCTYPE html>
       return text.innerHTML;
     }
 
+    function formatLocalTimestamp(date) {
+      const pad = value => String(value).padStart(2, '0');
+      const year = String(date.getFullYear()).padStart(4, '0');
+      const month = pad(date.getMonth() + 1);
+      const day = pad(date.getDate());
+      const hours = pad(date.getHours());
+      const minutes = pad(date.getMinutes());
+      const seconds = pad(date.getSeconds());
+      return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+    }
+
     function renderBattery(view) {
       const label = statusLabels[view.status] || view.status;
       const header = `
@@ -339,10 +350,12 @@ _DASHBOARD_HTML = """<!DOCTYPE html>
         `<span class="chip">C${index + 1}: ${voltage.toFixed(3)} V</span>`
       ).join('');
       const delta = view.cell_delta_mv === null ? '—' : view.cell_delta_mv.toFixed(1);
+      const lastUpdated = new Date(telemetry.timestamp * 1000);
 
       return `
         <article class="card">
           ${header}
+          <time class="bms-state" datetime="${lastUpdated.toISOString()}">Last updated: ${formatLocalTimestamp(lastUpdated)}</time>
           <div class="bms-state">BMS state: ${escapeText(bmsLabel)}</div>
           ${protections}
           <section>
@@ -543,6 +556,14 @@ def serve(config_path: str = "config.toml") -> None:
     from uvicorn.config import LOGGING_CONFIG
 
     log_config = deepcopy(LOGGING_CONFIG)
+    log_config["formatters"]["default"]["fmt"] = (
+        "%(asctime)s %(levelprefix)s %(message)s"
+    )
+    log_config["formatters"]["default"]["datefmt"] = "%Y-%m-%d %H:%M:%S %z"
+    log_config["formatters"]["access"]["fmt"] = (
+        '%(asctime)s %(levelprefix)s %(client_addr)s - "%(request_line)s" %(status_code)s'
+    )
+    log_config["formatters"]["access"]["datefmt"] = "%Y-%m-%d %H:%M:%S %z"
     log_config["loggers"]["monbat"] = {
         "handlers": ["default"], "level": "INFO", "propagate": False,
     }

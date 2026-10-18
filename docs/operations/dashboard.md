@@ -22,10 +22,13 @@ Then BLE clients close and the long background cadence resumes.
 Persistent connections are enabled by default during active collection.
 The service logs each persistent connection start and successful finish at INFO
 level with the Battery ID. Disconnect failures are logged at WARNING level.
+Service and HTTP access logs include the local server timestamp.
 `concurrency` limits simultaneous status requests, independently of how many
 BLE connections remain open. Background passes connect, read, and disconnect.
 Failures retain previous readings and retry with 10/20/40/60-second backoff,
 subject to the current collection cadence. Healthy Batteries continue updating.
+Each Battery card shows its last Telemetry timestamp in the browser's local time
+as `YYYY-MM-DD HH:mm:ss`.
 
 Readings older than `freshness_seconds` are offline; equality is still fresh.
 Failed polls retain the last successful reading and its original timestamp.
