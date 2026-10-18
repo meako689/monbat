@@ -137,3 +137,15 @@ retained clients, SSE, and rediscovery reuse/automatic hardware validation.
 88 offline tests pass. Implemented live probe: sequential average 0.482s,
 concurrent average 0.282s across three rounds each on current macOS hardware.
 Existing configuration retained; rediscovery will save tested concurrency 2 here.
+
+## Connection recovery — 2026-10-18
+
+- **[26 Reconnect Batteries using cached BLE devices](issues/26-reconnect-with-cached-ble-devices.md)**:
+  Open, ready-for-agent. Keep discovered BLEDevice objects in memory and try
+  them for active and background connections. Grilling confirmed: read healthy
+  connected Batteries first, defer rediscovery until the next retry, retain
+  cache entries after scan misses, and require bounded cleanup before
+  replacement. Preserve backoff; database failures do not trigger rediscovery.
+  Require offline coverage and a normal hardware reconnect check, with bounded
+  shutdown cleanup. Physical BMS lockup recovery is unconfirmed. Shared
+  understanding approved by the user; implementation is deferred.
