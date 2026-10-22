@@ -149,3 +149,8 @@ Existing configuration retained; rediscovery will save tested concurrency 2 here
   Require offline coverage and a normal hardware reconnect check, with bounded
   shutdown cleanup. Physical BMS lockup recovery is unconfirmed. Shared
   understanding approved by the user; implementation is deferred.
+  Linux investigation on 2026-10-19 confirms direct ATT connection works for
+  bat-1 but did not recover nonadvertising bat-2. Cached BLEDevice objects
+  also require surviving BlueZ Device1 objects; ticket 26 now explicitly
+  covers missing-object failure and deferred rediscovery. See
+  [reconnect research](../../docs/research/ble-ghost-connection.md).

@@ -23,6 +23,10 @@ Batteries; it cannot force a BMS that refuses connections to accept one.
   lifetime of the running service. Use it for all connections, including
   background polling. Keep it when closing a connection or when a scan misses
   the Battery; replace it when discovery finds a new BLEDevice.
+- On Linux, a cached BLEDevice depends on its BlueZ Device1 object still
+  existing. A missing object is a failed cached attempt, not proof that the
+  BMS is connected. Follow the deferred rediscovery path; do not fabricate
+  device paths or retry with a string address that triggers implicit scanning.
 - Read healthy connected Batteries before attempting recovery. Recovery may
   delay the following pass; independent scheduling is outside this ticket.
 - After a read or connection failure, disconnect the old client before
@@ -68,6 +72,10 @@ Automatic Bluetooth adapter resets and BMS resets are outside scope.
 - Scan misses and discovery failures retain cached devices. Subsequent
   retries alternate direct cached attempts and shared rediscovery. A database
   save failure does not schedule rediscovery.
+- A stale Linux BLEDevice whose BlueZ object has disappeared follows the
+  same bounded failure/backoff and deferred rediscovery path. A fresh scan
+  result replaces the stale entry; preserving a Python object must not be
+  mistaken for preserving BlueZ state.
 - An uncached Battery still uses discovery. Discovery errors, absent Batteries,
   and failed recovery attempts enter backoff without an immediate retry loop
   or duplicate failure counts.
@@ -91,6 +99,10 @@ timeouts, cancellation, and bounded shutdown. Validate a normal
 disconnect/reconnect on available hardware and record the platform and
 limitations. Recovery from the reported physical BMS lockup remains unverified
 unless reproduced and tested; offline coverage must not claim to resolve it.
+Include a cached-connect failure representing BlueZ's `device ... not found`
+and verify deferred discovery and replacement with a fresh BLEDevice. Record
+whether the hardware reconnect test uses Linux/BlueZ or macOS/CoreBluetooth;
+the latter does not validate Linux object lifetime.
 
 ## References
 
@@ -99,6 +111,8 @@ unless reproduced and tested; offline coverage must not claim to resolve it.
 - [BLE driver](../../../src/monbat/bms.py)
 - [Dashboard operations](../../../docs/operations/dashboard.md)
 - [Current protocol implementation](../../../docs/protocol/redodo.md)
+- [Linux direct-reconnect research and hardware observations](../../../docs/research/ble-ghost-connection.md)
+- [Redodo reset research and model applicability limits](../../../docs/research/redodo-bluetooth-reset.md)
 
 ## Comments
 
@@ -112,3 +126,19 @@ unless reproduced and tested; offline coverage must not claim to resolve it.
   retention after scan misses, bounded cleanup before replacement, offline
   and hardware validation, BLE versus persistence failure handling, and
   bounded final shutdown cleanup. Implementation remains deferred.
+- 2026-10-19: Linux investigation with Monbat stopped: BlueZ 5.64, Bleak
+  3.0.2, Intel Bluetooth 4.2 adapter. Bat-2 (`B00734`,
+  `C8:47:80:3F:91:B1`) had neither a cached BlueZ object nor an established
+  local connection. Two 12-second scans saw bat-1 but not bat-2. Direct
+  public-address ATT connections with gatttool timed out at 18 seconds and,
+  after 35 seconds with the adapter powered off, at 40 seconds. The same
+  read-only service query connected to bat-1 immediately. No physical BMS
+  lockup recovery was achieved; caching cannot force a nonadvertising BMS
+  to connect. Bat-1's supplied `device ... not found` traceback illustrates
+  the separate stale BlueZ object failure that this ticket must handle.
+- 2026-10-19: User identifies bat-2 as a Redodo 24 V 100 Ah Bluetooth Battery
+  produced in 2024; firmware may be 1.1.0 or 1.0.1 and is unconfirmed.
+  User stopped further remote recovery and requested research only.
+  Automatic adapter/BMS resets remain outside this implementation. Ticket
+  stays open and ready-for-agent; these are specification updates, not a
+  completed implementation.
