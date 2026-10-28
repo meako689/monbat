@@ -73,6 +73,15 @@ scope. Creating this ticket does not start a sleep/resume experiment.
 
 ## Comments
 
+- 2026-10-28: Logging commit `a70a336` pushed and fast-forward pulled on Linux.
+  Old server stopped gracefully; restarted at DEBUG in screen `619728.monbat`
+  with PID `619732`. Output `/tmp/monbat-debug-a70a336.screen.log` flushes every
+  second. Startup discovery, subscription, reads, saves and cleanup succeeded
+  for both Batteries; Dashboard HTTP 200 verified from the laptop. Configuration
+  unchanged. Mac Python direct HTTP failed with `No route to host` even outside
+  the sandbox; SSH remains available. Deployment evidence recorded in the plan.
+  Physical sleep/resume validation has not started; ticket remains claimed.
+
 - 2026-10-28: User authorized DEBUG instrumentation in main code with no
   collection/recovery logic change, commit/push, remote pull and restart at
   DEBUG. Implemented subscriber/scheduler/retry, BLE stage, Telemetry save and

@@ -5,8 +5,8 @@ still occurs with ticket 26 installed. Revised on 2026-10-28: the user confirms
 ticket 26 is deployed. The primary scenario is Dashboard closed during laptop
 sleep, followed by wake and opening the Dashboard to wake collection and Battery
 connections. Other scenarios follow only after this scenario is validated.
-Remote logging inspection completed. DEBUG instrumentation is now implemented
-for deployment; no configuration change or sleep/resume experiment has started.
+DEBUG instrumentation is deployed and running. No polling configuration change
+or sleep/resume experiment has started.
 
 ## 1. Record the setup
 
@@ -188,3 +188,23 @@ Estimated primary session: 5–10 minutes setup/capture, then 15–25 minutes fo
 two cycles. An additional background cycle at a 30-second interval should take
 roughly 5–10 minutes if recovery succeeds. Allow longer for failures or the
 user's normal sleep duration. Restore any temporary configuration at the end.
+
+## DEBUG deployment baseline — 2026-10-28
+
+Logging source commit `a70a336` was pushed to origin/master and pulled with
+`--ff-only` on the laptop. The old server stopped gracefully. Current screen
+session: `619728.monbat`; server PID: `619732`, launched at 22:22:31 +0200 with
+`uv run monbat serve --log-level debug`. Current output:
+`/tmp/monbat-debug-a70a336.screen.log`, with a one-second screen flush interval.
+The old screen log is preserved. Polling configuration remains unchanged.
+
+Startup evidence: shared discovery found both Batteries; bat-1 saved at
+22:22:43 +0200 and bat-2 at 22:22:47 +0200. Both clients disconnected, the pass
+completed in 18.475 seconds, and the scheduler entered background waiting with
+zero subscribers. Dashboard HTTP check on the laptop returned 200.
+This verifies logging and normal startup collection, not sleep/resume recovery.
+
+Direct HTTP access from the controlling Mac's Python interpreter returned
+`No route to host`, including outside the sandbox, while SSH access and the
+laptop's localhost HTTP check worked. Establish a working external observer
+before relying on it for the physical test; host-side captures remain available.
