@@ -3,17 +3,30 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from dataclasses import dataclass
 from time import monotonic
 from typing import TYPE_CHECKING, Literal
 
 from bleak import BleakScanner
-from monbat.bms import BatteryConnection
+from bleak.backends.device import BLEDevice
+from monbat.bms import BatteryConnection, BatteryTelemetry
 from monbat.db import TelemetryRepository
 
 if TYPE_CHECKING:
     from monbat.app import AppConfig, BatteryConfig
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(slots=True)
+class _BatteryState:
+    device: BLEDevice | None = None
+    connection: BatteryConnection | None = None
+    cleanup_pending: bool = False
+    rediscover: bool = False
+    failures: int = 0
+    retry_at: float = 0.0
+    persistent: bool = False
 
 
 class Poller:
@@ -26,10 +39,7 @@ class Poller:
         self._last_started: float | None = None
         self._subscribers = 0
         self._grace_until = 0.0
-        self._connections: dict[str, BatteryConnection] = {}
-        self._persistent_ids: set[str] = set()
-        self._retry_at: dict[str, float] = {}
-        self._failures: dict[str, int] = {}
+        self._batteries = {battery.id: _BatteryState() for battery in config.batteries}
 
     def subscribe(self) -> None:
         self._subscribers += 1
@@ -55,74 +65,142 @@ class Poller:
         self._wake.set()
         return "accepted"
 
-    async def _close(self, battery_id: str) -> None:
-        connection = self._connections.pop(battery_id, None)
-        if connection is not None:
-            persistent = battery_id in self._persistent_ids
-            self._persistent_ids.discard(battery_id)
-            try:
+    def _backoff(self, state: _BatteryState) -> None:
+        state.retry_at = monotonic() + min(10 * 2 ** (max(1, state.failures) - 1), 60)
+
+    def _failed(self, battery_id: str) -> None:
+        state = self._batteries[battery_id]
+        state.failures = min(state.failures + 1, 4)
+        self._backoff(state)
+        logger.warning("Poll failed for battery %s", battery_id, exc_info=True)
+
+    async def _close(self, battery_id: str) -> bool:
+        state = self._batteries[battery_id]
+        connection = state.connection
+        if connection is None:
+            return True
+        state.cleanup_pending = True
+        try:
+            async with asyncio.timeout(self._config.poller.timeout_seconds):
                 await connection.close()
-                if persistent:
-                    logger.info("Persistent BLE connection finished for battery %s", battery_id)
-            except Exception:
-                logger.warning("Disconnect failed for %s", battery_id, exc_info=True)
+        except Exception:
+            # Cleanup retries must not count the original BLE failure again.
+            state.failures = max(1, state.failures)
+            self._backoff(state)
+            logger.warning("Disconnect failed for %s", battery_id, exc_info=True)
+            return False
+        state.connection = None
+        state.cleanup_pending = False
+        if state.persistent:
+            logger.info("Persistent BLE connection finished for battery %s", battery_id)
+            state.persistent = False
+        return True
+
+    async def _save(self, battery_id: str, telemetry: BatteryTelemetry) -> None:
+        try:
+            await self._repo.save_telemetry(battery_id, telemetry)
+        except Exception:
+            self._failed(battery_id)
+            return
+        state = self._batteries[battery_id]
+        state.failures = 0
+        state.retry_at = 0.0
 
     async def _read(self, battery: BatteryConfig, semaphore: asyncio.Semaphore) -> None:
         async with semaphore:
+            state = self._batteries[battery.id]
+            connection = state.connection
+            assert connection is not None
             try:
-                telemetry = await self._connections[battery.id].read()
-                await self._repo.save_telemetry(battery.id, telemetry)
-                self._failures.pop(battery.id, None)
-                self._retry_at.pop(battery.id, None)
+                telemetry = await connection.read()
             except Exception:
+                state.cleanup_pending = True
+                state.rediscover = False
                 self._failed(battery.id)
-                await self._close(battery.id)
-            finally:
-                if not self._active() or not self._config.poller.persistent_connections:
-                    await self._close(battery.id)
+                return
+            await self._save(battery.id, telemetry)
 
-    def _failed(self, battery_id: str) -> None:
-        count = min(self._failures.get(battery_id, 0) + 1, 4)
-        self._failures[battery_id] = count
-        self._retry_at[battery_id] = monotonic() + min(10 * 2 ** (count - 1), 60)
-        logger.warning("Poll failed for battery %s", battery_id, exc_info=True)
-
-    async def _pass(self) -> None:
-        batteries = [b for b in self._config.batteries if monotonic() >= self._retry_at.get(b.id, 0)]
-        missing = [b for b in batteries if b.id not in self._connections]
-        if missing:
+    async def _recover(
+        self, battery: BatteryConfig, semaphore: asyncio.Semaphore, *, discovered: bool,
+    ) -> None:
+        async with semaphore:
+            state = self._batteries[battery.id]
+            assert state.device is not None and state.connection is None
             try:
-                devices = await BleakScanner.discover(timeout=self._config.poller.timeout_seconds)
-                found = {d.address: d for d in devices}
-            except Exception:
-                for battery in missing:
-                    self._failed(battery.id)
-                found = {}
-            for battery in missing:
-                if battery.address not in found:
-                    if battery.id not in self._retry_at or monotonic() >= self._retry_at[battery.id]:
-                        try:
-                            raise ConnectionError(f"Battery {battery.id} not discovered")
-                        except ConnectionError:
-                            self._failed(battery.id)
-                    continue
-                connection = BatteryConnection(found[battery.address], self._config.poller.timeout_seconds)
-                try:
+                connection = BatteryConnection(state.device, self._config.poller.timeout_seconds)
+                # Own partially connected/subscribed clients before any await.
+                state.connection = connection
+                state.cleanup_pending = True
+                async with asyncio.timeout(self._config.poller.timeout_seconds):
                     await connection.connect()
-                    self._connections[battery.id] = connection
                     if self._active() and self._config.poller.persistent_connections:
-                        self._persistent_ids.add(battery.id)
+                        state.persistent = True
                         logger.info(
                             "Persistent BLE connection started for battery %s (%s)",
                             battery.id, battery.name,
                         )
-                except BaseException as exc:
-                    await connection.close()
-                    if not isinstance(exc, Exception):
-                        raise
-                    self._failed(battery.id)
+                    telemetry = await connection.read()
+            except Exception:
+                state.rediscover = not discovered
+                self._failed(battery.id)
+                await self._close(battery.id)
+                return
+            state.cleanup_pending = False
+            state.rediscover = False
+            await self._save(battery.id, telemetry)
+            if not self._active() or not self._config.poller.persistent_connections:
+                await self._close(battery.id)
+
+    async def _pass(self) -> None:
+        now = monotonic()
+        batteries = [b for b in self._config.batteries if now >= self._batteries[b.id].retry_at]
+        healthy = [b for b in batteries if self._batteries[b.id].connection is not None
+                   and not self._batteries[b.id].cleanup_pending]
+        recovering = [b for b in batteries if b not in healthy]
         semaphore = asyncio.Semaphore(self._config.poller.concurrency)
-        await asyncio.gather(*(self._read(b, semaphore) for b in batteries if b.id in self._connections))
+        await asyncio.gather(*(self._read(b, semaphore) for b in healthy))
+        # Healthy reads finish before cleanup, discovery, or replacement setup.
+        for battery in healthy:
+            if (self._batteries[battery.id].cleanup_pending or not self._active()
+                    or not self._config.poller.persistent_connections):
+                await self._close(battery.id)
+        ready: list[BatteryConfig] = []
+        for battery in recovering:
+            state = self._batteries[battery.id]
+            if state.cleanup_pending and not await self._close(battery.id):
+                continue
+            ready.append(battery)
+        direct = [b for b in ready if self._batteries[b.id].device is not None
+                  and not self._batteries[b.id].rediscover]
+        discovery = [b for b in ready if b not in direct]
+        await asyncio.gather(*(self._recover(b, semaphore, discovered=False) for b in direct))
+        if not discovery:
+            return
+        try:
+            # Discovery itself waits timeout_seconds for advertisements. Allow
+            # one extra timeout budget for scanner startup and shutdown.
+            async with asyncio.timeout(2 * self._config.poller.timeout_seconds):
+                devices = await BleakScanner.discover(timeout=self._config.poller.timeout_seconds)
+        except Exception:
+            for battery in discovery:
+                self._batteries[battery.id].rediscover = False
+                self._failed(battery.id)
+            return
+        found = {device.address: device for device in devices}
+        for battery in self._config.batteries:
+            if battery.address in found:
+                self._batteries[battery.id].device = found[battery.address]
+        discovered: list[BatteryConfig] = []
+        for battery in discovery:
+            if battery.address not in found:
+                self._batteries[battery.id].rediscover = False
+                try:
+                    raise ConnectionError(f"Battery {battery.id} not discovered")
+                except ConnectionError:
+                    self._failed(battery.id)
+                continue
+            discovered.append(battery)
+        await asyncio.gather(*(self._recover(b, semaphore, discovered=True) for b in discovered))
 
     async def run(self) -> None:
         due = monotonic()
@@ -134,10 +212,10 @@ class Poller:
                 active = self._active()
                 if was_active and not active:
                     due = now + self._config.poller.poll_interval_seconds
+                    for battery_id, state in self._batteries.items():
+                        if state.connection is not None and not state.cleanup_pending:
+                            await self._close(battery_id)
                 was_active = active
-                if not active:
-                    for battery_id in list(self._connections):
-                        await self._close(battery_id)
                 if now >= due:
                     self._running = True
                     self._last_started = now
@@ -156,12 +234,9 @@ class Poller:
                     if self._subscribers > 0 or self._grace_until == 0:
                         due = monotonic()
                 except TimeoutError:
-                    if not self._active() and self._connections:
-                        for battery_id in list(self._connections):
-                            await self._close(battery_id)
-                        due = monotonic() + self._config.poller.poll_interval_seconds
+                    pass
         finally:
             self._stopped = True
             self._running = False
-            for battery_id in list(self._connections):
+            for battery_id in self._batteries:
                 await self._close(battery_id)

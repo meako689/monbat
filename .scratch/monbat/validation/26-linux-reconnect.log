@@ -1,0 +1,28 @@
+{"stage": "initial_discovery", "source": "/tmp/monbat-ticket26.JDeENX/src/monbat/poller.py"}
+2026-10-28 21:57:42,875 INFO Persistent BLE connection started for battery bat-1 (C01163)
+2026-10-28 21:57:44,860 INFO Persistent BLE connection started for battery bat-2 (B00734)
+{"stage": "initial_reads", "available": ["bat-1", "bat-2"], "scans": 1}
+2026-10-28 21:57:47,508 WARNING Poll failed for battery bat-1
+Traceback (most recent call last):
+  File "/tmp/monbat-ticket26.JDeENX/src/monbat/poller.py", line 115, in _read
+    telemetry = await connection.read()
+                ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/monbat-ticket26.JDeENX/.scratch/monbat/validation/26-linux-reconnect.py", line 48, in read
+    result = await super().read()
+             ^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/monbat-ticket26.JDeENX/src/monbat/bms.py", line 197, in read
+    await self.client.write_gatt_char(RX_WRITE_UUID, REQUEST_PAYLOAD, response=False)
+  File "/home/tira/code/monbat/.venv/lib/python3.15/site-packages/bleak/__init__.py", line 826, in write_gatt_char
+    characteristic = _resolve_characteristic(char_specifier, self.services)
+                                                             ^^^^^^^^^^^^^
+  File "/home/tira/code/monbat/.venv/lib/python3.15/site-packages/bleak/__init__.py", line 722, in services
+    raise BleakError("Service Discovery has not been performed yet")
+bleak.exc.BleakError: Service Discovery has not been performed yet
+2026-10-28 21:57:47,792 INFO Persistent BLE connection finished for battery bat-1
+{"stage": "failed_read_cleanup", "events": [["C8:47:80:78:33:FB", "read"], ["C8:47:80:3F:91:B1", "read"], ["C8:47:80:3F:91:B1", "valid_response"], ["C8:47:80:78:33:FB", "close"], ["C8:47:80:78:33:FB", "closed"]], "retry_seconds": 9.715843193000183}
+2026-10-28 21:57:59,269 INFO Persistent BLE connection started for battery bat-1 (C01163)
+{"stage": "active_cached_reconnect", "scans": 1, "before": 1793217463.1139846, "after": 1793217479.5383883, "events": [["C8:47:80:3F:91:B1", "read"], ["C8:47:80:3F:91:B1", "valid_response"], ["C8:47:80:78:33:FB", "connect"], ["C8:47:80:78:33:FB", "subscribed"], ["C8:47:80:78:33:FB", "read"], ["C8:47:80:78:33:FB", "valid_response"]]}
+2026-10-28 21:58:02,504 INFO Persistent BLE connection finished for battery bat-1
+2026-10-28 21:58:10,558 INFO Persistent BLE connection finished for battery bat-2
+{"stage": "background_cached_reconnect", "scans": 1, "timestamp": 1793217492.5017152, "events": [["C8:47:80:78:33:FB", "connect"], ["C8:47:80:78:33:FB", "subscribed"], ["C8:47:80:78:33:FB", "read"], ["C8:47:80:78:33:FB", "valid_response"], ["C8:47:80:78:33:FB", "close"], ["C8:47:80:78:33:FB", "closed"], ["C8:47:80:3F:91:B1", "connect"], ["C8:47:80:3F:91:B1", "subscribed"], ["C8:47:80:3F:91:B1", "read"], ["C8:47:80:3F:91:B1", "valid_response"], ["C8:47:80:3F:91:B1", "close"], ["C8:47:80:3F:91:B1", "closed"]], "clients": 5}
+{"stage": "cleanup", "still_connected": []}

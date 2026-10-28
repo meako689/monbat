@@ -1,7 +1,7 @@
 # Reconnect Batteries using cached BLE devices
 
 Type: task
-Status: open
+Status: resolved
 Triage: ready-for-agent
 
 ## Problem
@@ -13,9 +13,8 @@ discovered it. Passing its configured address directly to BleakClient does
 not bypass discovery: the installed macOS and Linux backends scan when given
 an address instead of a BLEDevice.
 
-The user reported a Battery that may believe it is still connected. That
-cause is unconfirmed. This task removes the fresh-discovery gate for known
-Batteries; it cannot force a BMS that refuses connections to accept one.
+This task removes the fresh-discovery gate for known Batteries. The previously
+reported bat-2 incident no longer applies and is not a validation target.
 
 ## Scope
 
@@ -96,13 +95,18 @@ recovery in active and background collection, deferred rediscovery, cache
 retention and refresh, uncached discovery, backoff and failure counting,
 database failure handling, healthy Battery read ordering, cleanup failures and
 timeouts, cancellation, and bounded shutdown. Validate a normal
-disconnect/reconnect on available hardware and record the platform and
-limitations. Recovery from the reported physical BMS lockup remains unverified
-unless reproduced and tested; offline coverage must not claim to resolve it.
+disconnect/reconnect on the remote Linux host and record the platform and
+limitations. The previous bat-2 incident is outside the current validation scope.
 Include a cached-connect failure representing BlueZ's `device ... not found`
 and verify deferred discovery and replacement with a fresh BLEDevice. Record
 whether the hardware reconnect test uses Linux/BlueZ or macOS/CoreBluetooth;
-the latter does not validate Linux object lifetime.
+the latter does not validate Linux object lifetime. A macOS check may supplement
+the required Linux reconnect check.
+
+## Implementation plan
+
+See [the implementation plan](../plans/26-cached-ble-recovery.md) for code
+changes, retry transitions, offline coverage, and remote Linux validation.
 
 ## References
 
@@ -113,6 +117,66 @@ the latter does not validate Linux object lifetime.
 - [Current protocol implementation](../../../docs/protocol/redodo.md)
 - [Linux direct-reconnect research and hardware observations](../../../docs/research/ble-ghost-connection.md)
 - [Redodo reset research and model applicability limits](../../../docs/research/redodo-bluetooth-reset.md)
+
+## Answer
+
+Implemented on 2026-10-28. The Poller owns typed per-Battery cache, connection,
+cleanup, and retry state. Healthy retained reads finish before recovery.
+Active/background reconnects use cached BLEDevice objects; failed direct
+attempts defer shared rediscovery and alternate retries without discarding
+cache entries. BLE setup/read errors and database failures have separate
+handling. Failed cleanup retains clients, blocks replacement, and respects
+backoff. Driver setup and disconnects are bounded; shutdown accounts for
+partially initialized clients. Focused operational/protocol docs and the spec
+describe the behavior.
+
+Validation:
+
+- `uv run --group dev pytest -m 'not integration' -q`: 118 passed, two live
+  tests deselected. Thirty new recovery cases cover identity/cache behavior,
+  retry/backoff, BlueZ missing-object failures, real-driver response isolation,
+  database errors, request ordering, cleanup timeouts, cancellation, grace
+  transitions, and shutdown. Browser checks pass outside the macOS sandbox;
+  the sandbox denied Chromium's MachPort launch on one run.
+- `git diff --check`: passed after the user restored Git.
+- Linux hardware check on `tira@192.168.88.144`, existing checkout
+  `/home/tira/code/monbat` at `2aa9274`, candidate source under
+  `/tmp/monbat-ticket26.JDeENX`: Linux 5.15.0-198-generic, BlueZ 5.64,
+  Bleak 3.0.2, Python 3.15.0, Intel USB adapter `8087:0a2b`.
+- Both configured Batteries were available. One shared discovery supplied
+  cached devices. A controlled bat-1 disconnect caused a failed read and old
+  client cleanup. Bat-2 saved valid Telemetry before that cleanup and before
+  bat-1 replacement setup. After the 10-second backoff, the replacement
+  subscribed and saved newer Telemetry using the identical cached device;
+  no additional scan occurred. Both background reconnects also used the cache.
+  Nine Telemetry rows were saved (bat-1: four; bat-2: five).
+- All five created hardware clients disconnected; final connected-client list
+  was empty. Monbat was stopped before and after the test. Validation used a
+  temporary database and source snapshot; the existing deployment was not
+  updated. No adapter reset or Battery control was performed.
+- Source SHA-256 matched local and remote files: Poller
+  `8aeaa651988ea6542630bb4dc5068610ff2b7676b20b0aa78e1f777785e5ec74`,
+  driver `f272b4796836ec37d2faeb0a73c224169d610741fc6206fff39d9083d4d15cef`.
+
+Reproducible harness: [26-linux-reconnect.py](../validation/26-linux-reconnect.py).
+Run with candidate `src` on `PYTHONPATH`, then pass the existing config path
+and a fresh temporary SQLite path. Captured evidence:
+[26-linux-reconnect.log](../validation/26-linux-reconnect.log).
+Hardware command:
+
+```sh
+cd /tmp/monbat-ticket26.JDeENX
+PYTHONPATH=/tmp/monbat-ticket26.JDeENX/src \
+  /home/tira/code/monbat/.venv/bin/python \
+  .scratch/monbat/validation/26-linux-reconnect.py \
+  /home/tira/code/monbat/config.toml \
+  /tmp/monbat-ticket26.JDeENX/telemetry.db
+```
+
+The missing BlueZ Device1 path, cleanup failures/timeouts, and shutdown
+cancellation were validated offline, not reproduced on hardware. This short
+Linux test does not establish long-run reliability or sleep/resume recovery
+(ticket 27). The historical bat-2 incident is no longer a validation target.
 
 ## Comments
 
@@ -142,3 +206,11 @@ the latter does not validate Linux object lifetime.
   Automatic adapter/BMS resets remain outside this implementation. Ticket
   stays open and ready-for-agent; these are specification updates, not a
   completed implementation.
+- 2026-10-28: User confirmed the bat-2 issue no longer applies and requested
+  an implementation plan with approval. Plan recorded; production code has not
+  changed. Earlier bat-2 observations remain historical, not acceptance targets.
+- 2026-10-28: User authorized implementation. Ticket claimed; Git is unavailable
+  on the local machine. Implement and validate without Git commands.
+- 2026-10-28: User supplied Linux SSH access and then restored Git. Implementation,
+  all 118 offline tests, and Linux active/background reconnect validation passed.
+  Ticket resolved; result and evidence linked from the map.

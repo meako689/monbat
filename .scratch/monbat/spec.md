@@ -333,3 +333,15 @@ Failure backoff is 10/20/40/60 seconds, subject to collection cadence. Each Batt
 request has a fresh bounded response buffer; shutdown disconnects retained clients.
 Discovery reuses existing configuration and known Battery labels, tests sequential
 and concurrency-2 retained-client reads, and automatically saves tested concurrency.
+
+## Connection recovery revision — 2026-10-28
+
+[Ticket 26](issues/26-reconnect-with-cached-ble-devices.md) adds service-lifetime
+in-memory BLEDevice caching for active and background connections. Healthy
+retained reads finish before recovery; failed clients require bounded cleanup
+before replacement. Cached failures defer shared rediscovery until the next
+eligible retry, alternating with direct attempts while retaining cache entries
+after scan misses/errors. Database errors do not trigger rediscovery. Backoff,
+browser cadence, request concurrency, and read-only status queries remain as
+specified above. See [operational recovery](../../docs/operations/dashboard.md#ble-recovery)
+for timeout and shutdown behavior.

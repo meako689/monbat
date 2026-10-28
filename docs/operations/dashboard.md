@@ -30,6 +30,40 @@ subject to the current collection cadence. Healthy Batteries continue updating.
 Each Battery card shows its last Telemetry timestamp in the browser's local time
 as `YYYY-MM-DD HH:mm:ss`.
 
+## BLE recovery
+
+The Poller caches each configured Battery's discovered `BLEDevice` in memory
+for the service lifetime. Active and background connections use that cache.
+Closing a connection, a scan miss, or a scan error keeps the cached object;
+a new matching discovery result replaces it. Restarting requires discovery
+again. Device details are never written to configuration or SQLite.
+
+Each pass finishes healthy retained reads before recovery. A failed read
+enters backoff and closes its old client before a replacement can connect on
+a later eligible pass. A failed or timed-out disconnect retains the client
+and blocks replacement until cleanup succeeds after backoff.
+
+Recovery connects with the cached object, subscribes to notifications, and
+reads a fresh validated response. A failed direct attempt schedules one shared
+rediscovery for the next eligible retry. A discovery attempt, scan miss, or
+scan error then returns to direct cached recovery after backoff. Uncached
+Batteries keep using discovery. There is no second attempt for the same Battery
+in one pass. Recovery can delay the following pass; scheduling remains shared.
+
+On Linux, the cached object requires its BlueZ Device1 object to exist. A
+`device ... not found` failure follows the same deferred rediscovery path;
+the cache does not preserve BlueZ state. The Poller does not retry with a string
+address that would cause Bleak to scan implicitly.
+
+Only successful Telemetry persistence clears backoff. Database errors retain
+the BLE cache and healthy active connection, using polling retries without
+rediscovery. Background clients still disconnect after each read.
+
+Shutdown attempts one final bounded disconnect for every retained client,
+including failed setup and pending cleanup. Failures are logged and shutdown
+finishes; release of the OS or BMS connection cannot be guaranteed. Recovery
+does not reset the adapter or the BMS.
+
 Readings older than `freshness_seconds` are offline; equality is still fresh.
 Failed polls retain the last successful reading and its original timestamp.
 HTTP failures retain Battery cards and report connection failure.

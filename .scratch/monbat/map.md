@@ -141,16 +141,13 @@ Existing configuration retained; rediscovery will save tested concurrency 2 here
 ## Connection recovery — 2026-10-18
 
 - **[26 Reconnect Batteries using cached BLE devices](issues/26-reconnect-with-cached-ble-devices.md)**:
-  Open, ready-for-agent. Keep discovered BLEDevice objects in memory and try
-  them for active and background connections. Grilling confirmed: read healthy
-  connected Batteries first, defer rediscovery until the next retry, retain
-  cache entries after scan misses, and require bounded cleanup before
-  replacement. Preserve backoff; database failures do not trigger rediscovery.
-  Require offline coverage and a normal hardware reconnect check, with bounded
-  shutdown cleanup. Physical BMS lockup recovery is unconfirmed. Shared
-  understanding approved by the user; implementation is deferred.
-  Linux investigation on 2026-10-19 confirms direct ATT connection works for
-  bat-1 but did not recover nonadvertising bat-2. Cached BLEDevice objects
-  also require surviving BlueZ Device1 objects; ticket 26 now explicitly
-  covers missing-object failure and deferred rediscovery. See
-  [reconnect research](../../docs/research/ble-ghost-connection.md).
+  Resolved on 2026-10-28: service-lifetime BLEDevice caching, healthy reads
+  before recovery, deferred rediscovery, separate database failure handling,
+  and bounded cleanup before replacement/shutdown. All 118 offline tests pass.
+  Linux hardware validation at `tira@192.168.88.144` passed active recovery
+  after a controlled disconnect and background reconnects for both Batteries
+  with one scan, nine saved Telemetry rows, and clean final disconnects.
+  Missing BlueZ objects and cleanup/cancellation failures have offline coverage;
+  long-run and sleep/resume behavior remain unverified. The old bat-2 incident
+  no longer applies. [Plan](plans/26-cached-ble-recovery.md) and
+  [hardware evidence](validation/26-linux-reconnect.log) are recorded.

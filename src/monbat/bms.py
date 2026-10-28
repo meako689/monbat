@@ -178,16 +178,15 @@ class BatteryConnection:
             self.ready.set()
 
     async def connect(self) -> None:
-        await self.client.connect()
-        try:
+        # Callers own cleanup, including partially connected/subscribed clients.
+        async with asyncio.timeout(self.timeout):
+            await self.client.connect()
             await self.client.start_notify(TX_NOTIFY_UUID, self._notify)
-        except BaseException:
-            await self.client.disconnect()
-            raise
 
     async def close(self) -> None:
         # Disconnect also removes notification subscriptions.
-        await self.client.disconnect()
+        async with asyncio.timeout(self.timeout):
+            await self.client.disconnect()
 
     async def read(self) -> BatteryTelemetry:
         self.buffer.clear()

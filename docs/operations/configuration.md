@@ -33,7 +33,13 @@ concurrency automatically. Failed validation saves 1 and reports the failure.
 This short test does not establish long-run or cross-platform reliability.
 Existing configuration still requires overwrite confirmation.
 
-`timeout_seconds` controls the BLE connection and response timeouts.
+`timeout_seconds` bounds connection/notification setup, each response, and
+each disconnect attempt. Poller recovery uses one timeout budget for setup
+and the first response together; cleanup has a separate budget. Shared scans
+collect advertisements for that duration, with an additional timeout budget
+for scanner startup/shutdown. Database saves are outside the BLE timeout.
+Discovered BLE devices are cached in memory until service restart; no cache
+setting or stored device details are required. See [BLE recovery](dashboard.md#ble-recovery).
 `freshness_seconds` sets the maximum reading age for online status and bank
 totals. It defaults to 60 when omitted and is independent of polling timing.
 Timing values must be finite and positive.
