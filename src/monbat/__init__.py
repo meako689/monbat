@@ -12,5 +12,9 @@ def main() -> None:
             from monbat.app import serve
 
             serve()
+        case ["serve", "--log-level", level] | ["--log-level", level]:
+            from monbat.app import serve
+
+            serve(log_level=level)
         case _:
-            print("Usage: monbat [discover|serve]")
+            print("Usage: monbat [discover|serve [--log-level LEVEL]]")

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import math
 import time
 import tomllib
@@ -19,6 +20,8 @@ from fastapi.responses import HTMLResponse, StreamingResponse
 from monbat.bms import BatteryTelemetry
 from monbat.db import TelemetryRepository
 from monbat.poller import Poller
+
+logger = logging.getLogger(__name__)
 
 BatteryStatus = Literal[
     "no-reading-yet", "offline", "charging", "discharging", "idle"
@@ -504,6 +507,7 @@ def build_app(
                         "summary": asdict(await summary()),
                     }, allow_nan=False)
                     if snapshot != previous:
+                        logger.debug("[DEBUG-resume] SSE snapshot yielded bytes=%d", len(snapshot))
                         yield f"data: {snapshot}\n\n"
                         previous = snapshot
                     else:
@@ -540,8 +544,10 @@ def build_app(
     return app
 
 
-def serve(config_path: str = "config.toml") -> None:
+def serve(config_path: str = "config.toml", *, log_level: str = "info") -> None:
     """Load local configuration and run Uvicorn with the configured service."""
+    if log_level not in {"debug", "info", "warning", "error", "critical"}:
+        raise SystemExit("Log level must be debug, info, warning, error, or critical")
     try:
         config = _load_config(config_path)
     except ValueError as exc:
@@ -565,8 +571,9 @@ def serve(config_path: str = "config.toml") -> None:
     )
     log_config["formatters"]["access"]["datefmt"] = "%Y-%m-%d %H:%M:%S %z"
     log_config["loggers"]["monbat"] = {
-        "handlers": ["default"], "level": "INFO", "propagate": False,
+        "handlers": ["default"], "level": log_level.upper(), "propagate": False,
     }
     uvicorn.run(
         app, host=config.server.host, port=config.server.port, log_config=log_config,
+        log_level=log_level,
     )

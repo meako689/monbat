@@ -32,6 +32,20 @@ as `YYYY-MM-DD HH:mm:ss`.
 
 ## BLE recovery
 
+For sleep/resume diagnosis, start `uv run monbat serve --log-level debug`.
+The default level remains INFO. Logs tagged `[DEBUG-resume]` report subscriber counts and grace,
+scheduler wakes and pass timing, deferred Batteries and retry deadlines,
+cached/discovered recovery, BLE connect/notification/write/read/disconnect
+stages, and saved Telemetry timestamps. Monotonic deadlines describe scheduling;
+log timestamps describe wall-clock time. An operation start without its
+completion, followed by a failure traceback, identifies the interrupted stage.
+The driver logs response sizes, without dumping payloads or changing BLE work.
+SSE snapshot logs show when an updated snapshot is yielded; browser receipt
+must still be confirmed through the Dashboard or a stream capture.
+DEBUG does not enable Bleak-wide tracing. Preserve output, for example with
+screen's `-L -Logfile` options, and capture OS suspend/resume and Bluetooth
+journal evidence separately. Use INFO again after the validation session.
+
 The Poller caches each configured Battery's discovered `BLEDevice` in memory
 for the service lifetime. Active and background connections use that cache.
 Closing a connection, a scan miss, or a scan error keeps the cached object;

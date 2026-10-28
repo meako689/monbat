@@ -140,6 +140,14 @@ Existing configuration retained; rediscovery will save tested concurrency 2 here
 
 ## Connection recovery — 2026-10-18
 
+- **[27 Recover Battery connections after laptop sleep/resume](issues/27-recover-battery-connections-after-laptop-resume.md)**:
+  Claimed for validation planning, needs-info. Reproduce sleep/resume with the user, capture scheduling
+  and BLE evidence, diagnose and fix recovery, simulate the observed failure
+  in regression tests, and verify the fix through another user hardware
+  session. Related to ticket 26; no dependency established yet.
+  [Post-ticket-26 validation plan](plans/27-sleep-resume-validation.md) prepared
+  on 2026-10-28; no physical experiment has started.
+
 - **[26 Reconnect Batteries using cached BLE devices](issues/26-reconnect-with-cached-ble-devices.md)**:
   Resolved on 2026-10-28: service-lifetime BLEDevice caching, healthy reads
   before recovery, deferred rediscovery, separate database failure handling,

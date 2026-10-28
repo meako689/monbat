@@ -9,11 +9,14 @@ Implements:
 from __future__ import annotations
 
 import asyncio
+import logging
 import struct
 import time
 from dataclasses import dataclass
 from typing import Literal
 from bleak.backends.device import BLEDevice
+
+logger = logging.getLogger(__name__)
 
 TX_NOTIFY_UUID = "0000ffe1-0000-1000-8000-00805f9b34fb"
 RX_WRITE_UUID = "0000ffe2-0000-1000-8000-00805f9b34fb"
@@ -162,6 +165,7 @@ class BatteryConnection:
     def __init__(self, device: BLEDevice | str, timeout_sec: float = 10.0) -> None:
         from bleak import BleakClient
         self.client = BleakClient(device, timeout=timeout_sec)
+        self.address = device.address if isinstance(device, BLEDevice) else device
         self.timeout = timeout_sec
         self.buffer = bytearray()
         self.ready = asyncio.Event()
@@ -175,30 +179,42 @@ class BatteryConnection:
         if len(self.buffer) >= MAX_RESPONSE_BYTES or (
             expected is not None and len(self.buffer) >= expected
         ):
+            logger.debug("[DEBUG-resume] BLE response assembled address=%s bytes=%d expected=%s", self.address, len(self.buffer), expected)
             self.ready.set()
 
     async def connect(self) -> None:
         # Callers own cleanup, including partially connected/subscribed clients.
+        logger.debug("[DEBUG-resume] BLE connect started address=%s timeout=%.3f", self.address, self.timeout)
         async with asyncio.timeout(self.timeout):
             await self.client.connect()
+            logger.debug("[DEBUG-resume] BLE connect completed address=%s", self.address)
+            logger.debug("[DEBUG-resume] BLE notification subscription started address=%s", self.address)
             await self.client.start_notify(TX_NOTIFY_UUID, self._notify)
+            logger.debug("[DEBUG-resume] BLE notification subscription completed address=%s", self.address)
 
     async def close(self) -> None:
         # Disconnect also removes notification subscriptions.
+        logger.debug("[DEBUG-resume] BLE disconnect started address=%s timeout=%.3f", self.address, self.timeout)
         async with asyncio.timeout(self.timeout):
             await self.client.disconnect()
+        logger.debug("[DEBUG-resume] BLE disconnect completed address=%s", self.address)
 
     async def read(self) -> BatteryTelemetry:
         self.buffer.clear()
         self.ready.clear()
         self.waiting = True
+        logger.debug("[DEBUG-resume] BLE status read started address=%s timeout=%.3f", self.address, self.timeout)
         try:
             async with asyncio.timeout(self.timeout):
+                logger.debug("[DEBUG-resume] BLE status write started address=%s", self.address)
                 await self.client.write_gatt_char(RX_WRITE_UUID, REQUEST_PAYLOAD, response=False)
+                logger.debug("[DEBUG-resume] BLE status write completed address=%s awaiting_response=true", self.address)
                 await self.ready.wait()
+            logger.debug("[DEBUG-resume] BLE response validation started address=%s bytes=%d", self.address, len(self.buffer))
             return parse_bms_payload(bytes(self.buffer))
         finally:
             self.waiting = False
+            logger.debug("[DEBUG-resume] BLE status read finished address=%s bytes=%d response_ready=%s", self.address, len(self.buffer), self.ready.is_set())
 
 
 async def poll_battery(address: str, timeout_sec: float = 10.0) -> BatteryTelemetry:
