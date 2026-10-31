@@ -2,14 +2,18 @@
 from __future__ import annotations
 
 import asyncio
+import errno
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
+from time import monotonic as real_monotonic
 
 import pytest
+from bleak.exc import BleakError
 from bleak.backends.device import BLEDevice
 
 from monbat import poller as module
-from monbat.bms import BatteryTelemetry
+from monbat.bluez import BlueZConnectionState
+from monbat.bms import BatteryConnection, BatteryTelemetry
 from monbat.poller import Poller
 from test_app import _make_config, _make_telemetry, StubTelemetryRepository
 from test_bms import REAL_STATUS
@@ -76,6 +80,17 @@ class Rig:
         monkeypatch.setattr(module, "monotonic", lambda: self.clock)
         monkeypatch.setattr(module.BleakScanner, "discover", self.scan)
         monkeypatch.setattr(module, "BatteryConnection", self.connection)
+
+        async def os_connection_state(
+            address: str, timeout: float,
+        ) -> BlueZConnectionState:
+            return BlueZConnectionState.UNAVAILABLE
+
+        async def disconnect_os_device(address: str, timeout: float) -> None:
+            return None
+
+        monkeypatch.setattr(module, "get_connection_state", os_connection_state, raising=False)
+        monkeypatch.setattr(module, "disconnect_device", disconnect_os_device, raising=False)
 
     def connection(self, device: BLEDevice, timeout: float) -> Connection:
         assert isinstance(device, BLEDevice)
@@ -453,6 +468,424 @@ def test_replacement_driver_subscribes_and_saves_its_own_response(
         assert events.index((0, "disconnect")) < events.index((1, "connect"))
         assert (1, "notify") in events and rig.scan_count == 1
         await rig.poller._close("bat-1")
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    ("os_state", "replacement_attempt", "needs_rediscovery"),
+    [
+        (BlueZConnectionState.DISCONNECTED, 2, False),
+        (BlueZConnectionState.ABSENT, 3, True),
+    ],
+)
+def test_available_battery_recovers_after_setup_timeout_and_bad_fd_cleanup(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    os_state: BlueZConnectionState,
+    replacement_attempt: int,
+    needs_rediscovery: bool,
+) -> None:
+    import bleak
+
+    async def scenario() -> None:
+        caplog.set_level("INFO", logger="monbat.poller")
+        rig = Rig(monkeypatch, active=False)
+        first_address = rig.config.batteries[0].address
+        clients: list[Client] = []
+        attempts: dict[str, int] = {}
+        os_checks: list[str] = []
+
+        class Client:
+            def __init__(self, device: BLEDevice, *, timeout: float) -> None:
+                self.address = device.address
+                self.attempt = attempts.get(self.address, 0) + 1
+                attempts[self.address] = self.attempt
+                self.callback: Callable[[object, bytearray], None] | None = None
+                self.disconnect_count = 0
+                self.write_count = 0
+                clients.append(self)
+
+            async def connect(self) -> None:
+                if self.address == first_address and self.attempt == 1:
+                    raise TimeoutError("service discovery timeout")
+                if (
+                    os_state is BlueZConnectionState.ABSENT
+                    and self.address == first_address
+                    and self.attempt == 2
+                ):
+                    raise BleakError(f"device '{self.address}' not found")
+
+            async def start_notify(
+                self, uuid: str, callback: Callable[[object, bytearray], None],
+            ) -> None:
+                self.callback = callback
+
+            async def write_gatt_char(
+                self, uuid: str, data: bytes, *, response: bool,
+            ) -> None:
+                self.write_count += 1
+                assert self.callback is not None
+                self.callback(0, bytearray(REAL_STATUS))
+
+            async def disconnect(self) -> None:
+                self.disconnect_count += 1
+                if self.address == first_address and self.attempt == 1:
+                    raise OSError(errno.EBADF, "Bad file descriptor")
+
+        async def inspect_os_connection(
+            address: str, timeout: float,
+        ) -> BlueZConnectionState:
+            os_checks.append(address)
+            return os_state
+
+        monkeypatch.setattr(bleak, "BleakClient", Client)
+        monkeypatch.setattr(module, "BatteryConnection", BatteryConnection)
+        # Fake the independent OS-state boundary without touching BlueZ.
+        monkeypatch.setattr(
+            module, "get_connection_state", inspect_os_connection, raising=False,
+        )
+
+        await rig.poller._pass()
+        saved = [battery_id for battery_id, _ in rig.repo.saved]
+        assert saved.count("bat-1") == 0
+        assert saved.count("bat-2") == 1
+        assert clients[0].disconnect_count == 1
+
+        if needs_rediscovery:
+            rig.scans.append([
+                BLEDevice(device.address, device.name, {"path": "refreshed"})
+                for device in rig.devices
+            ])
+        rig.clock += 10
+        await rig.poller._pass()
+
+        saved = [battery_id for battery_id, _ in rig.repo.saved]
+        assert saved.count("bat-1") == (0 if needs_rediscovery else 1)
+        assert saved.count("bat-2") == 2
+        if needs_rediscovery:
+            rig.clock += 20
+            await rig.poller._pass()
+            saved = [battery_id for battery_id, _ in rig.repo.saved]
+            assert saved.count("bat-1") == 1
+            assert saved.count("bat-2") == 3
+            assert rig.scan_count == 2
+        else:
+            assert rig.scan_count == 1
+        replacement = next(
+            client for client in clients
+            if client.address == first_address and client.attempt == replacement_attempt
+        )
+        assert replacement.write_count == 1
+        assert replacement.callback is not None
+        assert clients[0].disconnect_count == 1
+        assert os_checks == [first_address]
+        if needs_rediscovery:
+            assert any(
+                record.levelno >= 30 and "remains unavailable" in record.getMessage()
+                for record in caplog.records
+            )
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    ("os_states", "disconnect_error", "released", "disconnect_requests"),
+    [
+        ([BlueZConnectionState.DISCONNECTED], False, True, 0),
+        ([BlueZConnectionState.ABSENT], False, True, 0),
+        ([BlueZConnectionState.CONNECTED, BlueZConnectionState.DISCONNECTED], False, True, 1),
+        ([BlueZConnectionState.CONNECTED, BlueZConnectionState.CONNECTED], True, False, 1),
+        ([BlueZConnectionState.UNAVAILABLE], False, False, 0),
+    ],
+)
+def test_cleanup_retires_client_only_after_os_release_is_confirmed(
+    monkeypatch: pytest.MonkeyPatch,
+    os_states: list[BlueZConnectionState],
+    disconnect_error: bool,
+    released: bool,
+    disconnect_requests: int,
+) -> None:
+    async def scenario() -> None:
+        rig = Rig(monkeypatch)
+        await rig.poller._pass()
+        state = rig.poller._batteries["bat-1"]
+        old = state.connection
+        assert old is not None
+        old.behavior.fail = "read"
+        old.behavior.closes = ["error"]
+
+        observed_states: list[BlueZConnectionState] = []
+        requests: list[str] = []
+
+        async def inspect_os_connection(
+            address: str, timeout: float,
+        ) -> BlueZConnectionState:
+            index = min(len(observed_states), len(os_states) - 1)
+            status = os_states[index]
+            observed_states.append(status)
+            return status
+
+        async def request_os_disconnect(address: str, timeout: float) -> None:
+            requests.append(address)
+            if disconnect_error:
+                raise TimeoutError("BlueZ disconnect timed out")
+
+        monkeypatch.setattr(module, "get_connection_state", inspect_os_connection)
+        monkeypatch.setattr(module, "disconnect_device", request_os_disconnect)
+
+        await rig.poller._pass()
+
+        assert len(requests) == disconnect_requests
+        assert len(rig.clients) == 2
+        assert len(observed_states) == len(os_states)
+        assert (state.connection is None) is released
+        assert state.cleanup_pending is not released
+        saved = [battery_id for battery_id, _ in rig.repo.saved]
+        assert saved.count("bat-1") == 1
+        assert saved.count("bat-2") == 2
+
+    asyncio.run(scenario())
+
+
+def test_cleanup_retries_unavailable_os_check_until_release_is_observable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def scenario() -> None:
+        rig = Rig(monkeypatch)
+        await rig.poller._pass()
+        state = rig.poller._batteries["bat-1"]
+        old = state.connection
+        assert old is not None
+        old.behavior.fail = "read"
+        old.behavior.closes = ["error", "error"]
+        statuses = iter([
+            BlueZConnectionState.UNAVAILABLE,
+            BlueZConnectionState.DISCONNECTED,
+        ])
+
+        async def inspect_os_connection(
+            address: str, timeout: float,
+        ) -> BlueZConnectionState:
+            return next(statuses)
+
+        monkeypatch.setattr(module, "get_connection_state", inspect_os_connection)
+        await rig.poller._pass()
+        assert state.connection is old
+        assert state.cleanup_pending
+        assert old.close_count == 1
+        rig.clock += 10
+        await rig.poller._pass()
+        assert old.close_count == 2
+        assert state.connection is not None and state.connection is not old
+        assert not state.cleanup_pending
+        assert len(rig.clients) == 3
+        saved = [battery_id for battery_id, _ in rig.repo.saved]
+        assert saved.count("bat-1") == 2
+        assert saved.count("bat-2") == 3
+
+    asyncio.run(scenario())
+
+
+def test_connected_device_is_released_before_battery_recovery(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def scenario() -> None:
+        rig = Rig(monkeypatch)
+        await rig.poller._pass()
+        old = rig.poller._batteries["bat-1"].connection
+        assert old is not None
+        old.behavior.fail = "read"
+        old.behavior.closes = ["error"]
+        states = iter([
+            BlueZConnectionState.CONNECTED,
+            BlueZConnectionState.DISCONNECTED,
+        ])
+        os_events: list[str] = []
+
+        async def inspect_os_connection(
+            address: str, timeout: float,
+        ) -> BlueZConnectionState:
+            status = next(states)
+            os_events.append(f"confirmed:{status.value}")
+            rig.events.append((-2, f"confirmed:{status.value}"))
+            return status
+
+        async def request_os_disconnect(address: str, timeout: float) -> None:
+            os_events.append("disconnect-requested")
+            rig.events.append((-2, "disconnect-requested"))
+
+        monkeypatch.setattr(module, "get_connection_state", inspect_os_connection)
+        monkeypatch.setattr(module, "disconnect_device", request_os_disconnect)
+
+        await rig.poller._pass()
+        assert len(rig.clients) == 2
+        assert rig.poller._batteries["bat-1"].connection is None
+        assert os_events == [
+            "confirmed:connected",
+            "disconnect-requested",
+            "confirmed:disconnected",
+        ]
+
+        rig.clock += 10
+        await rig.poller._pass()
+        replacement = rig.clients[2]
+        assert replacement.device is rig.devices[0]
+        assert rig.events.index((-2, "confirmed:disconnected")) < rig.events.index(
+            (replacement.number, "connect")
+        )
+        assert [battery_id for battery_id, _ in rig.repo.saved].count("bat-1") == 2
+
+    asyncio.run(scenario())
+
+
+def test_transient_original_cleanup_failure_does_not_force_discard_client(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def scenario() -> None:
+        rig = Rig(monkeypatch)
+        await rig.poller._pass()
+        state = rig.poller._batteries["bat-1"]
+        old = state.connection
+        assert old is not None
+        old.behavior.fail = "read"
+        old.behavior.closes = ["error", "ok"]
+        os_checks = 0
+
+        async def inspect_connected(
+            address: str, timeout: float,
+        ) -> BlueZConnectionState:
+            nonlocal os_checks
+            os_checks += 1
+            return BlueZConnectionState.CONNECTED
+
+        async def failed_os_disconnect(address: str, timeout: float) -> None:
+            raise TimeoutError("BlueZ disconnect timed out")
+
+        monkeypatch.setattr(module, "get_connection_state", inspect_connected)
+        monkeypatch.setattr(module, "disconnect_device", failed_os_disconnect)
+
+        await rig.poller._pass()
+        assert state.connection is old and state.cleanup_pending
+        assert len(rig.clients) == 2
+        assert os_checks == 2
+        rig.clock += 10
+        await rig.poller._pass()
+        assert old.close_count == 2
+        assert state.connection is not None and state.connection is not old
+        assert not state.cleanup_pending
+        assert os_checks == 2
+        assert len(rig.clients) == 3
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    ("background_interval", "retry_delay"),
+    [(1800.0, 0.02), (0.5, 0.2)],
+)
+def test_background_retry_wakes_only_failed_battery_and_keeps_collection_cadence(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    background_interval: float,
+    retry_delay: float,
+) -> None:
+    async def scenario() -> None:
+        caplog.set_level("DEBUG", logger="monbat.poller")
+        rig = Rig(monkeypatch, active=False)
+        config = replace(
+            rig.config,
+            poller=replace(
+                rig.config.poller,
+                poll_interval_seconds=background_interval,
+            ),
+        )
+        rig.config = config
+        rig.poller = Poller(config, rig.repo)
+        monkeypatch.setattr(module, "monotonic", real_monotonic)
+
+        first_address = config.batteries[0].address
+        stale_devices: set[int] = set()
+        base_factory = rig.connection
+        read_times: dict[str, list[float]] = {b.address: [] for b in config.batteries}
+
+        def connection(device: BLEDevice, timeout: float) -> Connection:
+            client = base_factory(device, timeout)
+            original_connect = client.connect
+            original_read = client.read
+            original_close = client.close
+
+            async def connect() -> None:
+                if id(device) in stale_devices:
+                    raise BleakError(f"device '{device.address}' not found")
+                await original_connect()
+
+            async def read() -> BatteryTelemetry:
+                read_times[device.address].append(real_monotonic())
+                return await original_read()
+
+            async def close() -> None:
+                await original_close()
+                if device.address == first_address:
+                    stale_devices.add(id(device))
+
+            client.connect = connect
+            client.read = read
+            client.close = close
+            return client
+
+        monkeypatch.setattr(module, "BatteryConnection", connection)
+
+        # Save a normal background pass, then let BlueZ expire only bat-1's
+        # cached object before the next scheduled collection.
+        await rig.poller._pass()
+        fresh_devices = [
+            BLEDevice(device.address, device.name, {"path": "refreshed"})
+            for device in rig.devices
+        ]
+        rig.scans.append(fresh_devices)
+
+        def short_backoff(_poller: Poller, state: object) -> None:
+            setattr(state, "retry_at", real_monotonic() + retry_delay)
+
+        monkeypatch.setattr(Poller, "_backoff", short_backoff)
+        run_started = real_monotonic()
+        task = asyncio.create_task(rig.poller.run())
+
+        async def wait_for_reads(address: str, count: int) -> None:
+            while len(read_times[address]) < count:
+                await asyncio.sleep(0.001)
+
+        try:
+            await asyncio.wait_for(wait_for_reads(first_address, 2), 0.5)
+            other_address = next(b.address for b in config.batteries if b.address != first_address)
+            assert len(read_times[other_address]) == 2
+            assert rig.scan_count == 2
+
+            if background_interval < 1:
+                cadence_deadline = run_started + background_interval + 0.1
+                remaining = max(0.0, cadence_deadline - real_monotonic())
+                await asyncio.wait_for(wait_for_reads(other_address, 3), remaining)
+                assert read_times[other_address][2] < cadence_deadline
+        finally:
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(task, 1)
+
+        saved = [battery_id for battery_id, _ in rig.repo.saved]
+        assert saved.count("bat-1") >= 2
+        assert saved.count("bat-2") == (3 if background_interval < 1 else 2)
+        messages = [record.getMessage() for record in caplog.records]
+        assert any("BlueZ device object missing for bat-1" in message for message in messages)
+        assert any(
+            "Background collection completed retry_only=True saved=bat-1" in message
+            for message in messages
+        )
+        assert not any(
+            record.levelno >= 30 and record.getMessage() == "Poll failed for battery bat-1"
+            for record in caplog.records
+        )
+        assert any("[DEBUG-resume] Recovery started" in message for message in messages)
+
     asyncio.run(scenario())
 
 
