@@ -6,7 +6,7 @@ Blocked by: 02, 06
 
 ## Goal
 
-Graduate the validated [prototype](https://github.com/meako689/monbat/blob/66148347d2ecb08324bd2e2299ddcc49f6705c3b/src/monbat/prototype_bms_driver.py) into the production
+Graduate the validated [prototype](https://github.com/<user>689/monbat/blob/66148347d2ecb08324bd2e2299ddcc49f6705c3b/src/monbat/prototype_bms_driver.py) into the production
 `src/monbat/bms.py` module used by the Poller, and add a test suite covering
 both offline payload parsing and a live-hardware integration smoke-test driven
 from `config.toml`.
@@ -83,9 +83,9 @@ Implemented in:
   `pyproject.toml`.
 
 Live results from real hardware (16-10-2026):
-- **C01163** (`C8:47:80:78:33:FB`): 26.264 V | −2.247 A | 38.1 % SOC | 8S cells
+- **Battery 1** (`AA:BB:CC:00:00:01`): 26.264 V | −2.247 A | 38.1 % SOC | 8S cells
   (3.282–3.284 V) | T_cell=25°C T_bms=24°C
-- **B00734** (`C8:47:80:3F:91:B1`): 26.256 V | 0.0 A | 40.1 % SOC | 8S cells
+- **Battery 2** (`AA:BB:CC:00:00:02`): 26.256 V | 0.0 A | 40.1 % SOC | 8S cells
   (3.280–3.283 V) | T_cell=24°C T_bms=24°C
 
 All 11 tests passed (`uv run pytest tests/test_bms.py -v --tb=short -s`).

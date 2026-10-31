@@ -1,7 +1,7 @@
 # Linux BLE reconnect without discovery
 
 Researched 2026-10-19 for Battery `bat-2`, configured address
-`C8:47:80:3F:91:B1`. This note separates reconnect mechanisms from proof of a
+`AA:BB:CC:00:00:02`. This note separates reconnect mechanisms from proof of a
 working radio link. It does not establish that the BMS has a firmware fault.
 
 The user identifies bat-2 as a Redodo 24 V 100 Ah Bluetooth Battery produced
@@ -49,7 +49,7 @@ Keep Monbat stopped. Use the actual adapter path if it is not `hci0`.
 
 ```sh
 bluetoothctl show
-bluetoothctl info C8:47:80:3F:91:B1
+bluetoothctl info AA:BB:CC:00:00:02
 busctl --system tree org.bluez
 hcitool con
 busctl --system introspect org.bluez /org/bluez/hci0 org.bluez.Adapter1
@@ -65,7 +65,7 @@ If the target Device1 exists, try its Connect method without running discovery:
 
 ```sh
 busctl --system --timeout=30 call org.bluez \
-  /org/bluez/hci0/dev_C8_47_80_3F_91_B1 org.bluez.Device1 Connect
+  /org/bluez/hci0/dev_AA_BB_CC_FE_00_01 org.bluez.Device1 Connect
 ```
 
 If `ConnectDevice` is exposed and the public address type is known:
@@ -73,7 +73,7 @@ If `ConnectDevice` is exposed and the public address type is known:
 ```sh
 busctl --system --timeout=30 call org.bluez /org/bluez/hci0 \
   org.bluez.Adapter1 ConnectDevice 'a{sv}' 2 \
-  Address s C8:47:80:3F:91:B1 AddressType s public
+  Address s AA:BB:CC:00:00:02 AddressType s public
 ```
 
 A client-side timeout is not itself evidence that the server-side attempt has
@@ -86,7 +86,7 @@ Legacy `gatttool` can attempt an ATT connection to an explicit address/type
 without prior general discovery. A bounded, read-only service query is:
 
 ```sh
-timeout 18s gatttool -b C8:47:80:3F:91:B1 -t public --primary
+timeout 18s gatttool -b AA:BB:CC:00:00:02 -t public --primary
 ```
 
 Service discovery is a GATT operation after connection, distinct from BLE
@@ -96,7 +96,7 @@ channel even while connecting; process exit also closes its file descriptors.
 It cannot send a termination packet for an old link that this controller no
 longer owns. [BlueZ 5.64 gatttool sources][gatttool] [interactive source][interactive]
 
-`hcitool -i hci0 lecc C8:47:80:3F:91:B1` is a lower-level public-address LE
+`hcitool -i hci0 lecc AA:BB:CC:00:00:02` is a lower-level public-address LE
 connection command. `--random` changes the **peer** address type; `--static`
 changes the **local** address type. It requests a connection directly and prints
 a numeric handle on success. `hcitool -i hci0 ledc HANDLE` disconnects that

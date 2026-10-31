@@ -10,7 +10,7 @@ How should the Redodo/LiTime BLE GATT communication (service `0xFFE0`, TX notify
 
 ## Answer
 
-Validated through prototype [prototype_bms_driver.py](https://github.com/meako689/monbat/blob/66148347d2ecb08324bd2e2299ddcc49f6705c3b/src/monbat/prototype_bms_driver.py):
+Validated through prototype [prototype_bms_driver.py](https://github.com/<user>689/monbat/blob/66148347d2ecb08324bd2e2299ddcc49f6705c3b/src/monbat/prototype_bms_driver.py):
 
 1. **Protocol & GATT UUIDs**:
    - Service: `0000ffe0-0000-1000-8000-00805f9b34fb` (or short `"ffe0"`)

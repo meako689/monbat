@@ -140,7 +140,7 @@ Validation:
   the sandbox denied Chromium's MachPort launch on one run.
 - `git diff --check`: passed after the user restored Git.
 - Linux hardware check on `tira@192.168.88.144`, existing checkout
-  `/home/tira/code/monbat` at `2aa9274`, candidate source under
+  `$HOME/code/monbat` at `2aa9274`, candidate source under
   `/tmp/monbat-ticket26.JDeENX`: Linux 5.15.0-198-generic, BlueZ 5.64,
   Bleak 3.0.2, Python 3.15.0, Intel USB adapter `8087:0a2b`.
 - Both configured Batteries were available. One shared discovery supplied
@@ -167,9 +167,9 @@ Hardware command:
 ```sh
 cd /tmp/monbat-ticket26.JDeENX
 PYTHONPATH=/tmp/monbat-ticket26.JDeENX/src \
-  /home/tira/code/monbat/.venv/bin/python \
+  $HOME/code/monbat/.venv/bin/python \
   .scratch/monbat/validation/26-linux-reconnect.py \
-  /home/tira/code/monbat/config.toml \
+  $HOME/code/monbat/config.toml \
   /tmp/monbat-ticket26.JDeENX/telemetry.db
 ```
 
@@ -191,8 +191,8 @@ Linux test does not establish long-run reliability or sleep/resume recovery
   and hardware validation, BLE versus persistence failure handling, and
   bounded final shutdown cleanup. Implementation remains deferred.
 - 2026-10-19: Linux investigation with Monbat stopped: BlueZ 5.64, Bleak
-  3.0.2, Intel Bluetooth 4.2 adapter. Bat-2 (`B00734`,
-  `C8:47:80:3F:91:B1`) had neither a cached BlueZ object nor an established
+  3.0.2, Intel Bluetooth 4.2 adapter. Bat-2 (`Battery 2`,
+  `AA:BB:CC:00:00:02`) had neither a cached BlueZ object nor an established
   local connection. Two 12-second scans saw bat-1 but not bat-2. Direct
   public-address ATT connections with gatttool timed out at 18 seconds and,
   after 35 seconds with the adapter powered off, at 40 seconds. The same
