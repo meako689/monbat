@@ -67,6 +67,13 @@ the approved behavior; implementation is still pending.
 
 ## Not yet specified
 
+- **[29 Charging history tab](issues/29-charging-history-tab.md)**:
+  Resolved: user confirmed SOC per Battery, Dashboard/History tabs, a static
+  last-24-hours view, and strict gaps above configured `poll_interval_seconds`.
+  [Specification](../monbat-history/spec.md) published; browser/app tests accepted.
+  [30 Implement SOC History](issues/30-implement-soc-history-tab.md) is open,
+  ready-for-agent, and unblocked.
+
 - **Iteration 2 historical graphing UI**: Aggregation and downsampling queries over recorded SQLite telemetry, and visual charting presentation (lightweight client-side Chart.js/uPlot vs server-rendered SVG).
 - **Additional Battery Bank metrics**: Net current, combined capacity display,
   and time-to-empty/time-to-full estimates. Parallel SOC and net watts are

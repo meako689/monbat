@@ -312,6 +312,9 @@ timer. A summary fetch failure shows unavailable totals.
      (11), parallel SOC/net watts (12), and complete protocol/health fields (13).
 2. **Iteration 2 (Visual Charting)**:
    * Historical charge/discharge graphs (client-side SVG / uPlot / Chart.js embedded locally) utilizing the `/api/history` endpoint.
+   * First approved slice: [SOC History tab](../monbat-history/spec.md),
+     tracked in [ticket 30](issues/30-implement-soc-history-tab.md). Static
+     24-hour per-Battery SOC chart; gaps use configured `poll_interval_seconds`.
 3. **Iteration 3 (Additional Bank Metrics & Alerts)**:
    * Net current and optional time-to-empty/time-to-full calculations.
    * System health alerts (low cell voltage, high temperature cutoffs).
