@@ -23,8 +23,9 @@ Technical architecture and implementation specification for `monbat`: an offgrid
   Resolved locally on 2026-11-01: strict Telemetry validation and full
   schema/index checks, with typed latest/history serialization and complete
   response BLOB retrieval. Incompatible databases preserve their files. The
-  offline suite passed (181 passed, 2 live integration tests deselected), and
-  typechecking passed. No live hardware validation.
+  unchanged attributed capture round-trips through `/api/history` as exact hex.
+  The offline suite passed (181 passed, 2 live integration tests deselected),
+  and typechecking passed. No live hardware validation.
 
 - **[01 Python and uv environment](issues/01-python-315-and-uv-environment.md)**: Project requires Python 3.15 and uses `uv`; `uv sync` created the macOS ARM environment. Linux remains the primary deployment, with macOS support through Bleak and opaque platform-specific device addresses.
 - **[02 Redodo BMS BLE protocol and bleak driver design](issues/02-ble-protocol-and-bms-driver.md)**: Validated little-endian 66-byte packet parsing (`<I`, `<16H`, `<i`, `<h`, `<h`, `<H`, `<H`) and BleakClient single-poll connect-notify-write-disconnect cycle via executable prototype.

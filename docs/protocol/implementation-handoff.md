@@ -1,9 +1,11 @@
 # Protocol implementation handoff: tickets 21–23
 
 The user confirmed this scope on 2026-10-17, then revised it to preserve
-complete BLE responses. This document records the final contract. Ticket 21 implemented the driver and required caller adaptations on 2026-11-01;
-tickets 22–23 retain full storage/API validation and Dashboard acceptance. Read the root repository guidance, claim
-each ticket before work, and record results/validation when resolving it.
+complete BLE responses. This document records the final contract. Ticket 21
+implemented the driver and caller adaptations; ticket 22 completed storage/API
+validation on 2026-11-01. Ticket 23 owns the remaining Dashboard presentation
+and acceptance. Read the root repository guidance, claim each ticket before
+work, and record results/validation when resolving it.
 
 ## Read first and authority
 
@@ -16,11 +18,17 @@ each ticket before work, and record results/validation when resolving it.
 - [Implementation overview](redodo.md), [configuration/storage](../operations/configuration.md),
   and [Dashboard operations](../operations/dashboard.md).
 
-Implement [21](../../.scratch/monbat/issues/21-preserve-complete-status-regions.md),
-then [22](../../.scratch/monbat/issues/22-round-trip-protocol-evidence.md),
-then [23](../../.scratch/monbat/issues/23-display-protocol-fields-without-overclaiming.md).
-An intermediate ticket may update callers/fixtures to keep the repository
-working; later tickets still own full persistence/API/UI acceptance.
+The implementation proceeded in order:
+
+- [21](../../.scratch/monbat/issues/21-preserve-complete-status-regions.md)
+  decoded the status fields and adapted callers.
+- [22](../../.scratch/monbat/issues/22-round-trip-protocol-evidence.md)
+  completed fresh-database storage and latest/history APIs.
+- [23](../../.scratch/monbat/issues/23-display-protocol-fields-without-overclaiming.md)
+  owns Dashboard presentation.
+
+A ticket may update callers or fixtures needed to keep the repository working;
+each ticket records its own acceptance and validation.
 [T24](../../.scratch/monbat/issues/24-phase-3-charge-discharge-controls.md) is
 future Phase 3 planning. [T25](../../.scratch/monbat/issues/25-resolve-external-protocol-disagreements.md)
 is evidence research and does not block 21–23.

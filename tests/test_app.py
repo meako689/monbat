@@ -27,7 +27,11 @@ from monbat.app import (
 )
 from monbat.bms import BatteryTelemetry
 from monbat.db import TelemetryRepository
-from protocol_fixtures import captured_status_frame, checksum_correct_status_frame
+from protocol_fixtures import (
+    REAL_STATUS,
+    captured_status_frame,
+    checksum_correct_status_frame,
+)
 
 
 class StubTelemetryRepository(TelemetryRepository):
@@ -238,6 +242,7 @@ def test_captured_protocol_fields_round_trip_through_sqlite_api_and_sse(
 ) -> None:
     from monbat.bms import parse_bms_payload
 
+    original_telemetry = parse_bms_payload(REAL_STATUS, timestamp=989.0)
     frame = captured_status_frame()
     frame[16:48] = bytes(32)
     struct.pack_into("<H", frame, 16, 3300)
@@ -260,6 +265,7 @@ def test_captured_protocol_fields_round_trip_through_sqlite_api_and_sse(
     path = tmp_path / "telemetry.sqlite3"
     repo = TelemetryRepository(str(path))
     asyncio.run(repo.init_db())
+    asyncio.run(repo.save_telemetry("bat-1", original_telemetry))
     asyncio.run(repo.save_telemetry("bat-1", telemetry))
     asyncio.run(repo.save_telemetry("bat-1", high_word_telemetry))
     monkeypatch.setattr(app_module.time, "time", lambda: 1_000.0)
@@ -275,7 +281,9 @@ def test_captured_protocol_fields_round_trip_through_sqlite_api_and_sse(
         assert history_response.status_code == 200
 
         latest = latest_response.json()["bat-1"]["telemetry"]
-        first, latest_history = history_response.json()
+        original_capture, first, latest_history = history_response.json()
+        assert original_capture["timestamp"] == 989.0
+        assert original_capture["raw_response_hex"] == REAL_STATUS.hex()
         assert latest_response.json()["bat-1"]["cell_delta_mv"] == 50.0
         assert first["cell_readings"] == [
             {"slot": 1, "voltage_v": 3.3},

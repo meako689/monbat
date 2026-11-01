@@ -72,11 +72,14 @@ and the complete response BLOB. Startup checks full Telemetry column definitions
 primary-key behavior, and the battery/time index before switching to WAL; an
 incompatible database receives the fresh-path error without changing its file.
 Latest/history share explicit typed-field serialization, history returns exact
-response hex, and latest/SSE omit raw bytes. Focused storage/API docs are current.
+response hex, and latest/SSE omit raw bytes. The unchanged attributed capture
+also survives parsing, SQLite persistence, and `/api/history` as exact hex.
+Focused storage/API docs are current.
 
 Validation: `uv run pytest -m 'not integration' -q` — 181 passed, 2 live
 integration tests deselected. Targeted database, API, collection, and parser
-tests passed. Typechecking passed for changed production modules, the shared
-protocol fixture, and DB/API tests; `git diff --check` passed. Tests use the
-attributed B4 capture plus checksum-correct edge variants. Ticket 22 was not
-deployed or validated on live hardware.
+tests passed. The captured-frame-to-history regression passed after adding the
+exact-capture assertion. Typechecking passed for changed production modules,
+the shared protocol fixture, and DB/API tests; `git diff --check` passed. Tests
+use the attributed B4 capture and checksum-correct edge variants. Ticket 22
+was not deployed or validated on live hardware.
