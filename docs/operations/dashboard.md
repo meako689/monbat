@@ -146,7 +146,18 @@ Telemetry JSON includes `cell_readings` objects with original `slot` and
 their voltage reading is absent. The existing compact `cell_voltages_v` array
 remains available. Latest/SSE omit full responses; history adds the complete
 validated frame as lowercase `raw_response_hex` without a prefix.
-Dashboard presentation of the new protocol details is pending ticket 23.
+Battery cards label populated cell voltages by original slot number and keep
+populated-cell counts and delta. Expand **Battery details** for candidate
+balancing slots, nonzero unknown balancing bits, and additional temperature
+slots 3–5. Balancing is a reference-derived interpretation without physical
+validation. Additional sensor identities are unverified; 0 °C is displayed
+and does not imply an absent sensor.
+
+Named low-word protections remain prominent. Clear named protections do not
+imply a clear problem region: unknown low protection bits and the unknown
+upper problem/failure word appear as hex in Battery details, with a notice
+when additional problem data is present without named protections. BMS state
+4 remains **Disabled**. Full responses are available through history only.
 
 ## Browser regression tests
 

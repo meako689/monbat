@@ -1,7 +1,7 @@
 # Show balancing, temperatures, and complete problem data in Battery details
 
 Type: task
-Status: open
+Status: resolved
 Triage: ready-for-agent
 Blocked by: 22
 
@@ -44,3 +44,29 @@ temperatures, unknown state, and safe details rendering.
 ## Comments
 
 - 2026-10-17: Grilling confirmed storage, APIs, and Battery details together.
+
+
+## Answer
+
+Implemented locally on 2026-11-01. Cell chips use original populated slots;
+count/delta remain unchanged. Accessible Battery details shows reference-derived
+balancing candidates, unsigned unknown balancing bits, neutral temperature
+slots 3–5 including zero/negative values, and unknown low/upper problem hex.
+Named protections stay prominent; additional problem data receives a notice
+when named protections are clear. Disabled remains the B1 label. Focused
+Dashboard/protocol docs describe the implemented behavior.
+
+Validation: sparse-cell browser test failed with C2 before the fix and passed
+with C3 afterward. Protocol-details tests failed before implementation and
+passed afterward. `uv run pytest tests/test_app.py -q`: 40 passed.
+`uv run pytest -m 'not integration' -q`: 185 passed, 2 live tests deselected.
+`ty check src/monbat/app.py` and `git diff --check` pass. Broader production
+typechecking reports five unresolved Linux-only `dbus_fast` imports in
+unchanged `bluez.py` under the macOS environment. No live validation or
+deployment was performed.
+
+Code review: Spec found no implementation mismatch; completion bookkeeping
+is recorded here and in the map. Standards found no documented violations
+and one heuristic about duplicated protocol masks. Kept local presentation
+logic under this ticket's existing API contract, with a source comment.
+Local identifier/credential scan passed; config.toml and .env.local are ignored.
