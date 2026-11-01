@@ -8,7 +8,13 @@ import math
 import sqlite3
 from contextlib import closing
 
-from monbat.bms import BatteryTelemetry, BmsState, CellReading, SocSource
+from monbat.bms import (
+    BatteryTelemetry,
+    BmsState,
+    CellReading,
+    SocSource,
+    bms_state_from_raw,
+)
 
 _TELEMETRY_INDEX_NAME = "idx_telemetry_battery_time"
 
@@ -400,10 +406,7 @@ def _validate_telemetry(telemetry: BatteryTelemetry) -> None:
     _require_uint(telemetry.cycle_count, 32, "cycle_count")
     state_raw = _require_uint(telemetry.bms_state_raw, 16, "bms_state_raw")
     state = _bms_state(telemetry.bms_state)
-    expected_state = {0: "idle", 1: "charging", 2: "discharging", 4: "disabled"}.get(
-        state_raw, "unknown"
-    )
-    if state != expected_state:
+    if state != bms_state_from_raw(state_raw):
         raise ValueError("bms_state must match bms_state_raw")
 
     reported_soc = telemetry.reported_soc_percent

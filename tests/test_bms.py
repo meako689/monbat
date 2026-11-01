@@ -21,6 +21,7 @@ from bleak import BleakScanner
 from bleak.exc import BleakError
 
 from monbat.bms import BatteryTelemetry, CellReading, MIN_PAYLOAD_LEN, PROTECTION_FLAGS, expected_response_length, parse_bms_payload, poll_battery
+from protocol_fixtures import REAL_STATUS
 
 # ---------------------------------------------------------------------------
 # Helpers (only used by tests — not exported by production bms.py)
@@ -199,13 +200,6 @@ class TestLiveBatteries:
 
         print(f"\n[{address}] {t.voltage_v} V | {t.current_a} A | {t.soc_percent} % SOC")
         print(f"  cells={t.cell_voltages_v}  T_cell={t.cell_temp_c}°C  T_bms={t.bms_temp_c}°C")
-
-
-# Captured R-12100 response, mkeguy106/bmsmon BmsProtocolTest.kt,
-# commit 4534382d00702e14199e2a2aaab50180cf0878ac.
-REAL_STATUS = bytes.fromhex(
-    "000065019355aa007c3300000c340000030d030d030d030d00000000000000000000000000000000000000000000000000000000170018000000000000001027102700000000000000000000000000000000000000000000000063006400000000000000000000008b"
-)
 
 
 def test_captured_status_and_prefix() -> None:

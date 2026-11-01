@@ -9,6 +9,11 @@ import pytest
 
 from monbat.bms import BatteryTelemetry, CellReading, parse_bms_payload
 from monbat.db import TelemetryRepository
+from protocol_fixtures import (
+    REAL_STATUS,
+    captured_status_frame,
+    checksum_correct_status_frame,
+)
 
 
 def _telemetry(
@@ -17,16 +22,15 @@ def _telemetry(
     soc_percent: float | None = None,
     cell_voltages_v: tuple[float, ...] | None = None,
 ) -> BatteryTelemetry:
-    from test_bms import REAL_STATUS
-
-    frame = bytearray(REAL_STATUS)
+    frame = captured_status_frame()
     if cell_voltages_v is not None:
         frame[16:48] = bytes(32)
         for index, voltage in enumerate(cell_voltages_v):
             struct.pack_into("<H", frame, 16 + index * 2, round(voltage * 1000))
-        frame[-1] = sum(frame[:-1]) & 0xFF
 
-    telemetry = parse_bms_payload(bytes(frame), timestamp=timestamp)
+    telemetry = parse_bms_payload(
+        checksum_correct_status_frame(frame), timestamp=timestamp
+    )
     if soc_percent is None:
         return telemetry
     return replace(telemetry, soc_percent=soc_percent)
@@ -329,7 +333,7 @@ def test_nullable_health_and_unknown_bits_round_trip(tmp_path: Path) -> None:
 @pytest.mark.parametrize("fixture_name", ["REAL_STATUS", "A1_STATUS"])
 def test_parsed_response_survives_persistence(tmp_path: Path, fixture_name: str) -> None:
     from monbat.bms import parse_bms_payload
-    from test_bms import A1_STATUS, REAL_STATUS
+    from test_bms import A1_STATUS
 
     frame = REAL_STATUS if fixture_name == "REAL_STATUS" else A1_STATUS
     telemetry = parse_bms_payload(b"stale" + frame + b"trailing", timestamp=123)

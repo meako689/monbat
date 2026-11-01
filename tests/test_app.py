@@ -27,6 +27,7 @@ from monbat.app import (
 )
 from monbat.bms import BatteryTelemetry
 from monbat.db import TelemetryRepository
+from protocol_fixtures import captured_status_frame, checksum_correct_status_frame
 
 
 class StubTelemetryRepository(TelemetryRepository):
@@ -87,10 +88,9 @@ def _make_telemetry(
     current_a: float = 1.25,
     cell_voltages_v: tuple[float, ...] = (3.280, 3.282, 3.281),
 ) -> BatteryTelemetry:
-    from test_bms import REAL_STATUS
     from monbat.bms import parse_bms_payload
 
-    frame = bytearray(REAL_STATUS)
+    frame = captured_status_frame()
     frame[16:48] = bytes(32)
     for index, voltage in enumerate(cell_voltages_v):
         struct.pack_into("<H", frame, 16 + index * 2, round(voltage * 1000))
@@ -104,8 +104,9 @@ def _make_telemetry(
     struct.pack_into("<H", frame, 90, 37)
     struct.pack_into("<I", frame, 92, 98)
     struct.pack_into("<I", frame, 96, 123)
-    frame[-1] = sum(frame[:-1]) & 0xFF
-    return parse_bms_payload(bytes(frame), timestamp=timestamp)
+    return parse_bms_payload(
+        checksum_correct_status_frame(frame), timestamp=timestamp
+    )
 
 
 def test_latest_empty_includes_config_for_each_battery() -> None:
@@ -235,10 +236,9 @@ def test_captured_protocol_fields_round_trip_through_sqlite_api_and_sse(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from test_bms import REAL_STATUS
     from monbat.bms import parse_bms_payload
 
-    frame = bytearray(REAL_STATUS)
+    frame = captured_status_frame()
     frame[16:48] = bytes(32)
     struct.pack_into("<H", frame, 16, 3300)
     struct.pack_into("<H", frame, 20, 3350)
@@ -247,18 +247,15 @@ def test_captured_protocol_fields_round_trip_through_sqlite_api_and_sse(
     struct.pack_into("<I", frame, 84, 0x80008005)
     struct.pack_into("<H", frame, 12, 26_240)
     struct.pack_into("<i", frame, 48, -1_250)
-    frame[-1] = sum(frame[:-1]) & 0xFF
-    captured_variant = bytes(frame)
+    captured_variant = checksum_correct_status_frame(frame)
     telemetry = parse_bms_payload(
         b"stale-prefix" + captured_variant + b"trailing-data", timestamp=990.0
     )
 
     high_word_only = bytearray(captured_variant)
     struct.pack_into("<Q", high_word_only, 76, 0x8000000000000000)
-    high_word_only[-1] = sum(high_word_only[:-1]) & 0xFF
-    high_word_telemetry = parse_bms_payload(
-        bytes(high_word_only), timestamp=991.0
-    )
+    high_word_variant = checksum_correct_status_frame(high_word_only)
+    high_word_telemetry = parse_bms_payload(high_word_variant, timestamp=991.0)
 
     path = tmp_path / "telemetry.sqlite3"
     repo = TelemetryRepository(str(path))

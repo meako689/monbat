@@ -27,6 +27,9 @@ STATUS_HEADER = b"\x00\x00"
 STATUS_MARKER = b"\x01\x93\x55\xaa"
 BmsState = Literal["idle", "charging", "discharging", "disabled", "unknown"]
 SocSource = Literal["bms", "capacity"]
+_BMS_STATE_BY_RAW: dict[int, BmsState] = {
+    0: "idle", 1: "charging", 2: "discharging", 4: "disabled",
+}
 PROTECTION_FLAGS: tuple[tuple[int, str], ...] = (
     (0x04, "Overcharge"), (0x20, "Over-discharge"),
     (0x40, "Charging overcurrent"), (0x80, "Discharging overcurrent"),
@@ -36,6 +39,10 @@ PROTECTION_FLAGS: tuple[tuple[int, str], ...] = (
     (0x800, "Low temperature while discharging"),
     (0x4000, "Short circuit"),
 )
+
+
+def bms_state_from_raw(raw_state: int) -> BmsState:
+    return _BMS_STATE_BY_RAW.get(raw_state, "unknown")
 
 
 def _frame_start(data: bytes | bytearray) -> int | None:
@@ -157,9 +164,6 @@ def parse_bms_payload(data: bytes, timestamp: float | None = None) -> BatteryTel
     reported_soc = float(reported_soc_raw) if reported_soc_raw <= 100 else None
     soh_raw = struct.unpack_from("<I", data, 92)[0]
     state_raw = struct.unpack_from("<H", data, 88)[0]
-    states: dict[int, BmsState] = {
-        0: "idle", 1: "charging", 2: "discharging", 4: "disabled",
-    }
     problem_flags: int = struct.unpack_from("<Q", data, 76)[0]
     flags = problem_flags & 0xffffffff
     protections = [label for mask, label in PROTECTION_FLAGS if flags & mask]
@@ -185,7 +189,7 @@ def parse_bms_payload(data: bytes, timestamp: float | None = None) -> BatteryTel
         soh_percent=float(soh_raw) if soh_raw <= 100 else None,
         cycle_count=struct.unpack_from("<I", data, 96)[0],
         bms_state_raw=state_raw,
-        bms_state=states.get(state_raw, "unknown"),
+        bms_state=bms_state_from_raw(state_raw),
         raw_response=data,
         problem_flags=problem_flags,
         balancing_mask=struct.unpack_from("<I", data, 84)[0],
