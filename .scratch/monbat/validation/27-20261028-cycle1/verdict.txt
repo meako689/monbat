@@ -1,0 +1,17 @@
+{
+  "bat-1": {
+    "baseline_timestamp": 1793219137.5525982,
+    "new_readings": 0,
+    "first_saved_after_open_seconds": null,
+    "last_status": "offline",
+    "passed": false
+  },
+  "bat-2": {
+    "baseline_timestamp": 1793219137.8076353,
+    "new_readings": 26,
+    "first_saved_after_open_seconds": 45.73885440826416,
+    "last_status": "charging",
+    "passed": true
+  }
+}
+FAIL: not every Battery resumed fresh saved Telemetry

@@ -1,0 +1,3 @@
+{"observed_at": 1793219373.9524531, "event": "user_reports_sleep_started"}
+{"observed_at": 1793219541.680725, "event": "user_reports_wake_dashboard_open_refresh_one_live_one_stale"}
+{"observed_at": 1793219602.64482, "event": "user_clarifies", "sleep": "around 2 min", "action": "load page, wait, browser refresh"}
