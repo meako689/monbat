@@ -59,9 +59,9 @@ and do not establish physical balancing on the user's Batteries.
 unknown regions and checksum, excluding stale prefixes and trailing bytes.
 The repository persists it with each successful Telemetry row. Latest/SSE omit
 these bytes; history returns lowercase `raw_response_hex`. Problem flags use
-16-digit lowercase hex in JSON to preserve u64 precision. Storage/API boundaries validate these fields. Battery details displays qualified
-balancing candidates, neutral additional-temperature slots, and unknown
-low/upper problem data as hex; cell chips retain original slot numbers.
+16-digit lowercase hex in JSON to preserve u64 precision. Storage/API boundaries validate these fields. The Dashboard displays
+named temperatures/protections and original cell slot numbers. Additional
+protocol fields remain available through storage/APIs for investigation.
 
 ## Reference and validation
 

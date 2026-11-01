@@ -378,19 +378,6 @@ _DASHBOARD_HTML = """<!DOCTYPE html>
       const protections = telemetry.active_protections.length
         ? `<section class="protections" role="status"><strong>Active BMS protections</strong><ul>${telemetry.active_protections.map(label => `<li>${escapeText(label)}</li>`).join('')}</ul></section>`
         : '<div class="bms-state">No named low-word BMS protections reported</div>';
-      const problemFlags = BigInt(`0x${telemetry.problem_flags}`);
-      // Known low protection bits: implementation-handoff.md (wire-spec baseline).
-      const unknownLow = problemFlags & 0xffffffffn & ~0x4fe4n;
-      const unknownUpper = problemFlags >> 32n;
-      const unknownBalancing = Math.floor(telemetry.balancing_mask / 65536) * 65536;
-      const problemDetails = [
-        unknownLow ? `Unknown low protection bits: 0x${unknownLow.toString(16).padStart(8, '0')}` : '',
-        unknownUpper ? `Unknown upper problem/failure word: 0x${unknownUpper.toString(16).padStart(8, '0')}` : ''
-      ].filter(Boolean).map(text => `<div>${text}</div>`).join('');
-      const additionalTemperatures = telemetry.temperature_slots_c.slice(2).map((temperature, index) =>
-        `<div>Temperature slot ${index + 3}: ${temperature} °C</div>`
-      ).join('');
-      const balancingSlots = telemetry.balancing_cell_slots.join(', ') || 'None reported';
       const soh = telemetry.soh_percent === null ? '—' : `${telemetry.soh_percent.toFixed(0)}%`;
       const currentClass = telemetry.current_a > 0 ? 'charge' : (telemetry.current_a < 0 ? 'discharge' : '');
       const currentSign = telemetry.current_a > 0 ? '+' : '';
@@ -408,7 +395,6 @@ _DASHBOARD_HTML = """<!DOCTYPE html>
           <time class="bms-state" datetime="${lastUpdated.toISOString()}">Last updated: ${formatLocalTimestamp(lastUpdated)}</time>
           <div class="bms-state">BMS state: ${escapeText(bmsLabel)}</div>
           ${protections}
-          ${problemFlags && !telemetry.active_protections.length ? '<div class="bms-state" role="status">Additional problem data reported; see Battery details.</div>' : ''}
           <section>
             <div class="soc-row"><span>State of charge</span><span>${telemetry.soc_percent.toFixed(1)}%</span></div>
             <div class="progress"><div class="progress-fill" style="width:${stateOfCharge}%"></div></div>
@@ -422,15 +408,6 @@ _DASHBOARD_HTML = """<!DOCTYPE html>
             <div><span class="metric-label">BMS temperature</span><span class="metric-value">${telemetry.bms_temp_c} °C</span></div>
           </section>
           <div class="bms-state">SOH: ${soh} · Cycles: ${telemetry.cycle_count} · SOC source: ${telemetry.soc_source === 'bms' ? 'BMS' : 'Capacity estimate'}</div>
-          <details class="bms-state">
-            <summary>Battery details</summary>
-            <div>Candidate balancing cell slots: ${balancingSlots}</div>
-            <div>Reference-derived interpretation; physical balancing has not been validated.</div>
-            ${unknownBalancing ? `<div>Unknown balancing bits: 0x${unknownBalancing.toString(16).padStart(8, '0')}</div>` : ''}
-            ${additionalTemperatures}
-            <div>Additional sensor identities are unverified; zero does not imply absence.</div>
-            ${problemDetails}
-          </details>
           <section class="cells">
             <div class="cells-header"><span>Cell voltages (${telemetry.cell_voltages_v.length})</span><span>Δ ${delta} mV</span></div>
             <div class="chips">${cells || '<span class="empty">No cell voltages</span>'}</div>

@@ -629,7 +629,7 @@ def test_dashboard_preserves_sparse_cell_slots() -> None:
 
 
 @pytest.mark.parametrize('problem_flags,state', [(0x8000000000000000, 4), (0x8000000180000004, 99), (0, 4)])
-def test_dashboard_qualifies_protocol_details(problem_flags: int, state: int) -> None:
+def test_dashboard_preserves_state_and_named_protections(problem_flags: int, state: int) -> None:
     async def scenario() -> None:
         from monbat.bms import parse_bms_payload
 
@@ -649,37 +649,15 @@ def test_dashboard_qualifies_protocol_details(problem_flags: int, state: int) ->
                 snapshot = {'latest': client.get('/api/latest').json(), 'summary': client.get('/api/summary').json()}
                 await page.evaluate('(s) => stream.onmessage({data: JSON.stringify(s)})', snapshot)
                 card = page.locator('#batteries-grid .card').first
-                await card.get_by_text('Battery details', exact=True).click()
-                details = card.locator('details')
-                await expect(details).to_contain_text('Candidate balancing cell slots: 1, 3, 16')
-                await expect(details).to_contain_text('Reference-derived interpretation; physical balancing has not been validated.')
-                await expect(details).to_contain_text('Unknown balancing bits: 0x80000000')
-                for text in ['Temperature slot 3: 0 °C', 'Temperature slot 4: -12 °C', 'Temperature slot 5: -3 °C']:
-                    await expect(details).to_contain_text(text)
                 await expect(card).to_contain_text('BMS state: Disabled' if state == 4 else 'BMS state: Unknown (99)')
-                if problem_flags:
-                    await expect(details).to_contain_text('Unknown upper problem/failure word: 0x80000000' if state == 4 else 'Unknown upper problem/failure word: 0x80000001')
-                    await expect(card).not_to_contain_text('No active BMS protections reported')
-                else:
-                    await expect(details).not_to_contain_text('Unknown upper problem/failure word')
-                    await expect(card).to_contain_text('No named low-word BMS protections reported')
                 if state == 99:
-                    await expect(details).to_contain_text('Unknown low protection bits: 0x80000000')
                     await expect(card.locator('.protections')).to_contain_text('Overcharge')
+                else:
+                    await expect(card).to_contain_text('No named low-word BMS protections reported')
                 await expect(card.locator('img, script, svg')).to_have_count(0)
                 assert REAL_STATUS.hex() not in await card.inner_text()
-                await page.evaluate('stream.onerror()')
-                await expect(details).to_contain_text('Temperature slot 4: -12 °C')
-                # Updated evidence removes old masks, keeps zero readings, and escapes labels.
-                snapshot['latest']['bat-1']['telemetry']['balancing_mask'] = 0
-                snapshot['latest']['bat-1']['telemetry']['balancing_cell_slots'] = []
-                snapshot['latest']['bat-1']['telemetry']['problem_flags'] = '0000000000000000'
                 snapshot['latest']['bat-1']['telemetry']['active_protections'] = ['<img src=x onerror="window.injected=true">']
                 await page.evaluate('(s) => stream.onmessage({data: JSON.stringify(s)})', snapshot)
-                await card.get_by_text('Battery details', exact=True).click()
-                await expect(details).to_contain_text('Candidate balancing cell slots: None reported')
-                await expect(details).not_to_contain_text('Unknown balancing bits')
-                await expect(details).not_to_contain_text('Unknown upper problem/failure word')
                 await expect(card.locator('.protections')).to_contain_text('<img src=x onerror="window.injected=true">')
                 await expect(card.locator('img')).to_have_count(0)
     asyncio.run(scenario())

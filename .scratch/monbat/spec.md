@@ -115,6 +115,11 @@ Dashboard use typed fields without repeatedly transmitting full responses. Expos
 details, keep named protections prominent, and show unknown failure data
 as hex. Balancing remains a reference-derived interpretation.
 
+Dashboard scope revision on 2026-11-01: the user requested removal of these
+protocol details after live review. Ticket 32 supersedes the preceding
+presentation requirements; preserve original cell labels and all storage/API
+fields. The Dashboard retains named temperatures/protections and BMS state.
+
 Keep the exact read-only 0x13 query and current ATT write mode unchanged.
 Defer heater/control interpretation, second voltage, balance memory, and
 discharged-capacity count. Charge/discharge controls are Phase3 roadmap work

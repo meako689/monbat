@@ -12,6 +12,12 @@ Technical architecture and implementation specification for `monbat`: an offgrid
 
 ## Decisions so far
 
+- **[32 Remove Dashboard protocol details](issues/32-remove-dashboard-protocol-details.md)**:
+  Resolved locally on 2026-11-01 at the user's request after live review.
+  Removed ticket 23's disclosure/notice; original cell labels and ordinary
+  readings remain. Storage/API fields retained. 191 offline tests and changed
+  app typechecking pass. Supersedes ticket 23's presentation requirements.
+
 - **[31 Detect default-CLI services during deployment](issues/31-detect-default-cli-service.md)**:
   Resolved on 2026-11-01 after ticket 23 cutover. Deployment now recognizes
   manual default/explicit service launch forms and preserves log levels and

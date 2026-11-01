@@ -33,6 +33,14 @@ each ticket records its own acceptance and validation.
 future Phase 3 planning. [T25](../../.scratch/monbat/issues/25-resolve-external-protocol-disagreements.md)
 is evidence research and does not block 21–23.
 
+## Dashboard scope revision — 2026-11-01
+
+After reviewing the deployed Dashboard, the user requested removal of ticket
+23's protocol details. [Ticket 32](../../.scratch/monbat/issues/32-remove-dashboard-protocol-details.md)
+supersedes the balancing/additional-temperature/unknown-problem presentation
+requirements below. Preserve original cell labels and all storage/API fields.
+This decision does not establish whether the BMS uses those fields.
+
 ## Final scope
 
 Add balancing candidate cells, all five temperature slots, full problem/failure
