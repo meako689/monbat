@@ -44,8 +44,8 @@ labels align with the grid; narrow layouts use fewer labels to avoid overlap.
 Connected readings now use 2px traces without repeated dots. Isolated readings
 use small, unoutlined dots; inspecting a reading highlights only that reading.
 All recorded values and the strict gap boundary remain available. Updated the
-History specification and focused Dashboard documentation. This follow-up is
-local and has not been deployed.
+History specification and focused Dashboard documentation. Included in the
+chart follow-up deployment recorded below.
 
 ### Connected traces and hourly labels — 2026-11-01
 
@@ -54,7 +54,7 @@ Battery's consecutive recorded readings now connect, including across polling
 gaps. A Battery with a single reading retains its small dot. Desktop labels
 every hourly grid line with its two-digit local hour; mobile retains sparse
 labels. Removed the unused polling interval from browser chart configuration.
-These changes remain local and have not been deployed.
+Included in the chart follow-up deployment recorded below.
 
 ## Validation
 
@@ -100,6 +100,13 @@ These changes remain local and have not been deployed.
 
 ## Deployment
 
+- Chart follow-up: pushed and deployed
+  `93d7d43c041422fca2a3fa62f7606d4c4e83eea2` from `0b2241c`.
+  Both Batteries produced fresh readings; live connected traces, hourly
+  desktop labels, mobile layout, three visible SSE updates, history/storage
+  SOC, database integrity, and post-grace connection cleanup passed.
+  Configuration/database retained. The next 1,800-second background pass was
+  not observed. See [chart deployment evidence](../validation/30-20261101-chart-deployment.md).
 - Deployed `0b2241cc7e0c2530554a9d17b74b3ccb4e0421f9` from
   `fe26b333b3c50857b3ba4ea7f36086b32107823e`. The deployment script returned
   `status: deployed` after fresh readings from both Batteries; configuration

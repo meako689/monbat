@@ -58,12 +58,17 @@ Technical architecture and implementation specification for `monbat`: an offgrid
   thinner connected traces, small isolated markers, one highlighted reading,
   and time labels that fit mobile screens. All 199 offline tests and changed
   app typechecking pass; desktop/mobile rendering was inspected. This
-  follow-up has not been deployed. See ticket 30's visual follow-up validation.
+  follow-up is included in the chart deployment below. See ticket 30's visual
+  follow-up validation.
   The next user follow-up replaces the strict gap rule: all consecutive
   recorded readings for each Battery connect, and desktop labels every hourly
   grid line. Single readings and mobile readability are preserved. All 199
   offline tests and typechecking pass; desktop/tablet/mobile were inspected.
-  These changes remain local and have not been deployed.
+  Pushed and deployed `93d7d43` from `0b2241c`: both Batteries passed fresh
+  readings and three visible SSE updates; connected traces, hourly labels,
+  history/storage SOC, database integrity, and post-grace connection cleanup
+  passed. Configuration/database retained. The next 1,800-second background
+  pass remains unobserved. [Evidence](validation/30-20261101-chart-deployment.md).
 
 - **[23 Show protocol fields in Battery details](issues/23-display-protocol-fields-without-overclaiming.md)**:
   Resolved locally on 2026-11-01: original cell slots, qualified balancing,
