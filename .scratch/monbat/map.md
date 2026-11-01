@@ -19,6 +19,13 @@ Technical architecture and implementation specification for `monbat`: an offgrid
   and unknowns. Capture length/checksum and local links verified. Disabled
   matches bmsmon; calledit describes charge disabled on studied LiTime Batteries.
 
+- **[22 Persist useful protocol fields and expose them through APIs](issues/22-round-trip-protocol-evidence.md)**:
+  Resolved locally on 2026-11-01: strict Telemetry validation and full
+  schema/index checks, with typed latest/history serialization and complete
+  response BLOB retrieval. Incompatible databases preserve their files. The
+  offline suite passed (181 passed, 2 live integration tests deselected), and
+  typechecking passed. No live hardware validation.
+
 - **[01 Python and uv environment](issues/01-python-315-and-uv-environment.md)**: Project requires Python 3.15 and uses `uv`; `uv sync` created the macOS ARM environment. Linux remains the primary deployment, with macOS support through Bleak and opaque platform-specific device addresses.
 - **[02 Redodo BMS BLE protocol and bleak driver design](issues/02-ble-protocol-and-bms-driver.md)**: Validated little-endian 66-byte packet parsing (`<I`, `<16H`, `<i`, `<h`, `<h`, `<H`, `<H`) and BleakClient single-poll connect-notify-write-disconnect cycle via executable prototype.
 - **[03 Interactive BLE discovery CLI and TOML configuration schema](issues/03-discovery-cli-and-config-schema.md)**: Specified `monbat discover` CLI scan and alias flow, zero-dependency TOML serialization, and `config.toml` structure.
@@ -95,9 +102,10 @@ the approved behavior; implementation is still pending.
 - **[21 Decode useful protocol fields and preserve cell identity](issues/21-preserve-complete-status-regions.md)**:
   Resolved locally on 2026-11-01: stable cell slots, five signed temperatures,
   complete problem/balancing masks, and exact immutable validated responses.
-  Required database/JSON callers adapted; ticket 22 retains full boundary and
-  API validation, ticket 23 retains Dashboard presentation. 143 offline tests
-  pass; changed production modules pass typechecking. Both review axes pass.
+  Required database/JSON callers adapted; ticket 22 completed full boundary
+  and API validation, while ticket 23 retains Dashboard presentation. 143
+  offline tests pass; changed production modules pass typechecking. Both
+  review axes pass.
   Linux deployment of `f94e072` completed on 2026-11-01 with a fresh database;
   both Batteries saved valid responses and the Dashboard smoke test passed
   through an SSH tunnel. [Evidence](validation/21-20261101-deployment.md).
@@ -113,15 +121,16 @@ code and earlier completed tasks do not define protocol facts.
 | Ticket | Work | Readiness | Dependencies |
 |---|---|---|---|
 | [21](issues/21-preserve-complete-status-regions.md) | Decode balancing, temperatures, full problem region, original cell slots | resolved | None |
-| [22](issues/22-round-trip-protocol-evidence.md) | Useful fields and complete-response BLOBs in a fresh database | ready-for-agent | 21 |
+| [22](issues/22-round-trip-protocol-evidence.md) | Useful fields and complete-response BLOBs in a fresh database | resolved | 21 |
 | [23](issues/23-display-protocol-fields-without-overclaiming.md) | Qualified balancing/temperature details, unknown failure data, slot numbering | ready-for-agent | 22 |
 | [24](issues/24-phase-3-charge-discharge-controls.md) | Phase3 charge/discharge control investigation | needs-triage | Future phase |
 | [25](issues/25-resolve-external-protocol-disagreements.md) | Resolve disputed physical meanings with external evidence | needs-info | Does not block21–23 |
 
-Grilling confirmed by the user on 2026-10-17. Ticket 21 is resolved; tickets 22–23 remain open. The user subsequently revised the storage
-choice: preserve complete validated BLE responses as SQLite BLOBs alongside
-useful typed fields, with history hex retrieval. Start fresh without deleting
-or migrating old databases. Keep
+Grilling confirmed by the user on 2026-10-17. Ticket 21 is resolved, ticket 22
+was resolved locally on 2026-11-01, and ticket 23 remains open. The user
+subsequently revised the storage choice: preserve complete validated BLE
+responses as SQLite BLOBs alongside useful typed fields, with history hex
+retrieval. Start fresh without deleting or migrating old databases. Keep
 read-only status polling and current ATT mode unchanged. B1 governs the
 Redodo baseline; other sources fill gaps and identify unresolved disagreements.
 

@@ -1,7 +1,7 @@
 # Persist useful protocol fields and expose them through APIs
 
 Type: task
-Status: open
+Status: resolved
 Triage: ready-for-agent
 Blocked by: 21
 
@@ -63,3 +63,20 @@ and unknown bytes; prefixes/trailing unrelated bytes must not be stored.
   all storage/API/SSE edge-case acceptance still need implementation/verification.
   Attributed B4/A1 repository round trips and old database byte preservation
   are covered; these do not replace this ticket's full acceptance criteria.
+
+## Answer
+
+Completed repository range and cross-field validation for typed Telemetry,
+canonical 16-digit problem hex, ordered cell slots, all five signed temperatures,
+and the complete response BLOB. Startup checks full Telemetry column definitions,
+primary-key behavior, and the battery/time index before switching to WAL; an
+incompatible database receives the fresh-path error without changing its file.
+Latest/history share explicit typed-field serialization, history returns exact
+response hex, and latest/SSE omit raw bytes. Focused storage/API docs are current.
+
+Validation: `uv run pytest -m 'not integration' -q` — 181 passed, 2 live
+integration tests deselected. Targeted database, API, collection, and parser
+tests passed. Typechecking passed for changed production modules, the shared
+protocol fixture, and DB/API tests; `git diff --check` passed. Tests use the
+attributed B4 capture plus checksum-correct edge variants. Ticket 22 was not
+deployed or validated on live hardware.
