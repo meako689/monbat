@@ -87,6 +87,12 @@ scope. Creating this ticket does not start a sleep/resume experiment.
 
 ## Comments
 
+- 2026-11-01: At the user's request, commit `aaf7a80` was pushed and deployed
+  to Linux. First background collection saved both Batteries; API and bounded
+  Dashboard SSE checks confirmed new readings and retained connections.
+  [Deployment record](../validation/28-20261101-deployment.md). Configuration
+  is unchanged. No physical sleep/resume retest; status remains claimed.
+
 - 2026-11-01: User approved shared background discovery and Dashboard connection
   reuse. [Ticket 28](28-shared-background-discovery.md) is implemented and resolved
   locally: one fresh scan per background pass, reuse for newly eligible recovery,

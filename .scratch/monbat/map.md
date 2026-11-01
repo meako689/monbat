@@ -146,8 +146,10 @@ Existing configuration retained; rediscovery will save tested concurrency 2 here
   Active Dashboard/grace connections and recent reconnect candidates remain
   reusable; disconnected candidates are cleared at the background boundary.
   133 offline tests pass. Both November 1 diagnostic cases fail against the
-  pristine prior Poller and pass against the fix. No deployment or hardware
-  verification was performed; ticket 27 retains the physical validation scope.
+  pristine prior Poller and pass against the fix. Application commit `aaf7a80`
+  is now [deployed to Linux](validation/28-20261101-deployment.md); startup and
+  bounded Dashboard collection saved new Telemetry for both Batteries. Ticket
+  27 retains the physical sleep/resume validation scope.
 
 - **[27 Recover Battery connections after laptop sleep/resume](issues/27-recover-battery-connections-after-laptop-resume.md)**:
   Claimed, ready-for-agent. The [recovery specification](../monbat-recovery/spec.md)
@@ -167,7 +169,8 @@ Existing configuration retained; rediscovery will save tested concurrency 2 here
   shows all 38 post-startup background passes first fail on stale cached objects,
   and reproduces retry-deadline drift that can split shared recovery discovery.
   Shared background discovery and batched recovery are now implemented locally
-  in ticket 28. Deployment and physical validation remain pending.
+  in ticket 28 and deployed as `aaf7a80`. Physical sleep/resume validation remains
+  pending.
   Keep claimed until the physical retest passes. See the ticket's latest comment
   and [updated validation plan](plans/27-sleep-resume-validation.md).
 

@@ -3,8 +3,8 @@
 Implementation follow-up: the user approved these changes, now implemented
 locally in [ticket 28](../../issues/28-shared-background-discovery.md). The
 investigation below records the pre-change deployment. Post-fix evidence is
-recorded at the end of this report; the Linux deployment has not been updated
-in this session.
+recorded at the end of this report. The subsequent [Linux deployment](../28-20261101-deployment.md)
+of application commit `aaf7a80` verified new background and Dashboard readings.
 
 Use shared discovery before Linux background connections after long idle gaps.
 Keep retained active connections, bounded cleanup with OS release confirmation,
@@ -209,4 +209,5 @@ retry_offsets=[] recovery_scans=1 both_saved_after=18.000s
 checks, with two live cases deselected. No new debug instrumentation was added;
 existing stage diagnostics remain. These results validate the policy and its
 regressions, not physical timing or sleep/resume recovery. Ticket 28 is resolved
-for local implementation; deployment and ticket 27's Linux retest are pending.
+for local implementation. The subsequent deployment is linked above; ticket
+27's physical Linux sleep/resume retest remains pending.

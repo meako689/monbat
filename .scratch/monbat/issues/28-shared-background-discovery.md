@@ -54,6 +54,13 @@ Cached connections for the dashboard re use."
 
 ## Comments
 
+- 2026-11-01: User authorized commit, push, and deployment. Application commit
+  `aaf7a80` is deployed and running on Linux in screen session `775105.monbat`.
+  Both Batteries saved on the first background pass. HTTP and bounded Dashboard
+  SSE checks verified new readings and retained connection reuse. Existing
+  configuration is unchanged. [Deployment evidence](../validation/28-20261101-deployment.md).
+  Physical sleep/resume remains ticket 27's separate validation scope.
+
 - 2026-11-01: Claimed for implementation after user approval. No deployment or
   Bluetooth experiment is included in this change.
 
@@ -86,6 +93,7 @@ Validation:
   for live local identifiers; local configuration and captures remain ignored.
 
 Focused operational/protocol docs and the collection/recovery specifications
-now describe the approved reuse boundary. No deployment, live Bluetooth action,
-or physical performance/sleep test was performed. Ticket 27 remains claimed
-until its separate physical validation is complete.
+now describe the approved reuse boundary. Initial local validation did not
+include deployment or live Bluetooth work; the subsequent deployment is
+recorded above. Ticket 27 remains claimed until its separate physical validation
+is complete.
