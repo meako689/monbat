@@ -27,7 +27,9 @@ The Linux host needs the checkout's existing `.venv` with Python 3.11+, Git,
 must be clean, and `config.toml` must be ignored. The SSH repo path must identify
 **the running service's working directory**; `~/` paths use the remote home directory, and relative paths resolve from
 the SSH login directory. An existing service must be the
-single Python `monbat serve` process in that checkout.
+single Python Monbat service process in that checkout. Detection supports
+both `monbat` and `monbat serve`, with optional `--log-level LEVEL`, including
+manual launches. Discovery and unrelated Python processes are excluded.
 
 Load the ignored access file on the controlling computer:
 

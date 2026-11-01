@@ -146,3 +146,39 @@ def test_remote_home_path_expands_only_the_home_prefix(monkeypatch: pytest.Monke
     assert remote.startswith('"$HOME"/\'checkout with spaces/$(touch must-not-run)/.venv/bin/python\' ')
     import shlex
     assert shlex.split(remote)[-1] == repo
+
+
+@pytest.mark.parametrize('arguments,expected_level', [
+    ([], 'info'),
+    (['--log-level', 'debug'], 'debug'),
+    (['serve'], 'info'),
+    (['serve', '--log-level', 'warning'], 'warning'),
+    (['discover'], None),
+    (['unknown'], None),
+])
+def test_service_detection_matches_supported_cli_forms(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    arguments: list[str], expected_level: str | None,
+) -> None:
+    repo = tmp_path / 'checkout'
+    repo.mkdir()
+    proc = tmp_path / 'proc'
+    entry = proc / '1234'
+    entry.mkdir(parents=True)
+    (entry / 'stat').write_text(_stat('100'))
+    (entry / 'cmdline').write_bytes(
+        ('\0'.join(['/synthetic/bin/python', '/synthetic/bin/monbat', *arguments]) + '\0').encode()
+    )
+    (entry / 'cwd').symlink_to(repo, target_is_directory=True)
+    original_iterdir = Path.iterdir
+    original_read_text = Path.read_text
+    monkeypatch.setattr(Path, 'iterdir', lambda path: proc.iterdir() if path == Path('/proc') else original_iterdir(path))
+    monkeypatch.setattr(Path, 'read_text', lambda path, **kwargs: original_read_text(
+        proc / path.relative_to('/proc') if path.is_relative_to('/proc') else path, **kwargs))
+
+    found = deployment.servers(repo)
+
+    assert found == ([] if expected_level is None else [deployment.Server(1234, '100', expected_level)])
+    assert deployment.servers(tmp_path / 'different-checkout') == []
+    (entry / 'cmdline').write_bytes(b'/synthetic/bin/python\0/synthetic/bin/unrelated\0serve\0')
+    assert deployment.servers(repo) == []

@@ -56,13 +56,20 @@ def servers(repo: Path) -> list[Server]:
             continue
         try:
             ticks = start_ticks(int(entry.name))
-            argv = (entry / 'cmdline').read_bytes().decode().split('\0')
+            argv = (entry / 'cmdline').read_bytes().decode().rstrip('\0').split('\0')
             if not Path(argv[0]).name.startswith('python'):
                 continue
-            if not any(Path(a).name == 'monbat' and b == 'serve' for a, b in zip(argv, argv[1:])):
+            if len(argv) < 2 or Path(argv[1]).name != 'monbat':
                 continue
+            # Match the service launch forms accepted by monbat.main().
+            match argv[2:]:
+                case [] | ['serve']:
+                    level = 'info'
+                case ['--log-level', level] | ['serve', '--log-level', level]:
+                    pass
+                case _:
+                    continue
             if (entry / 'cwd').resolve(strict=True) == repo:
-                level = argv[argv.index('--log-level') + 1] if '--log-level' in argv else 'info'
                 if ticks is not None and start_ticks(int(entry.name)) == ticks:
                     found.append(Server(int(entry.name), ticks, level))
         except (PermissionError, FileNotFoundError, ProcessLookupError):

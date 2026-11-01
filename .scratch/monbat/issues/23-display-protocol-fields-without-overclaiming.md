@@ -70,3 +70,12 @@ is recorded here and in the map. Standards found no documented violations
 and one heuristic about duplicated protocol masks. Kept local presentation
 logic under this ticket's existing API contract, with a source comment.
 Local identifier/credential scan passed; config.toml and .env.local are ignored.
+
+
+## Deployment
+
+Deployed `3d40b08` on 2026-11-01 with existing configuration/database. Both
+Batteries passed fresh-reading checks; live APIs/SSE, browser rendering, SQLite
+integrity, and retained-client release passed. A default-CLI detection gap
+required a checked manual graceful stop; follow-up fix is ticket 31.
+[Sanitized evidence](../validation/23-20261101-deployment.md).

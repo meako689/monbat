@@ -12,13 +12,21 @@ Technical architecture and implementation specification for `monbat`: an offgrid
 
 ## Decisions so far
 
+- **[31 Detect default-CLI services during deployment](issues/31-detect-default-cli-service.md)**:
+  Resolved on 2026-11-01 after ticket 23 cutover. Deployment now recognizes
+  manual default/explicit service launch forms and preserves log levels and
+  process identity guards. 191 offline tests and script typechecking pass;
+  both review axes pass. No additional service restart required.
+
 - **[23 Show protocol fields in Battery details](issues/23-display-protocol-fields-without-overclaiming.md)**:
   Resolved locally on 2026-11-01: original cell slots, qualified balancing,
   neutral additional temperatures, and complete unknown problem hex in
   accessible details. Disabled and freshness behavior retained. 185 offline
   tests pass; changed app module typechecks. Review found no spec mismatch
   or documented standards violation; local mask duplication retained as a
-  presentation-scope tradeoff. No deployment/live validation performed.
+  presentation-scope tradeoff. Linux deployment of `3d40b08` passed fresh
+  readings for both Batteries, API/SSE/browser checks, database integrity, and
+  retained-client release. [Evidence](validation/23-20261101-deployment.md).
 
 - **[20 Local comprehensive protocol specification](issues/20-local-protocol-spec.md)**:
   Resolved: [wire spec](../../docs/protocol/redodo-wire-spec.md) and
