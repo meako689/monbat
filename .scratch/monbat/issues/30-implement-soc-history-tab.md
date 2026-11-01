@@ -1,7 +1,7 @@
 # Implement the SOC History tab
 
 Type: task
-Status: open
+Status: resolved
 Triage: ready-for-agent
 Blocked by: 29
 
@@ -25,6 +25,34 @@ per Battery. Break traces at gaps greater than the loaded deployment's
 - Preserve SSE collection and Dashboard behavior across tab changes.
 - Run offline regressions and inspect desktop/mobile chart rendering.
 - Update focused Dashboard documentation and record validation here.
+
+## Answer
+
+Added accessible Dashboard/History tabs to the existing page. History fetches
+the existing `/api/history?hours=24` endpoint on entry, plots stored effective
+SOC in an embedded SVG over a fixed 24-hour window, and remains static until
+re-entry. It uses configured Battery colors/names, local-time labels, a fixed
+0–100% axis, and a strict `poll_interval_seconds` gap boundary. Isolated
+readings, loading, empty, and failure states are preserved. Tab changes keep
+the one SSE connection and Dashboard updates active. Storage, APIs, BLE, and
+collection timing are unchanged.
+
+## Validation
+
+- Browser/app regression tests cover default and keyboard tab navigation,
+  lazy load, static History, re-entry, SSE continuity, configured strict gap
+  boundaries, window filtering, isolated readings, escaping, loading/empty/error
+  states, and desktop hover/mobile tap.
+- Offline suite: `uv run --offline --dev pytest -m 'not integration' -q` —
+  197 passed, 2 live integration tests deselected.
+- Typechecking: `uv run --with ty ty check src/monbat/app.py tests/test_app.py` —
+  all checks passed.
+- Visual inspection: desktop at 1440×1000 and mobile at 390×844; chart scale,
+  labels, legend, and narrow layout inspected.
+- `git diff --check` passed. Standards review found no documented-rule
+  violations; the history-window snapshot is passed as one value, and shared
+  test-app request forwarding now uses one helper. Spec review found no
+  behavior mismatch or scope creep.
 
 ## References
 

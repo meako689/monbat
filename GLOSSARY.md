@@ -39,5 +39,5 @@ _Avoid_: Setup wizard, pairing agent, scanner
 
 **Dashboard**:
 The minimalist web interface served by FastAPI displaying current Battery
-status. Historical charge/discharge graphs are planned for Iteration 2.
+status, with a separate static 24-hour SOC History tab for configured Batteries.
 _Avoid_: Frontend, web portal, control panel

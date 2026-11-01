@@ -3,10 +3,12 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import struct
 import sys
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -426,7 +428,9 @@ def test_dashboard_html_is_self_contained() -> None:
     assert "new EventSource('/api/events')" in response.text
     assert "events.onmessage" in response.text
     assert "https://" not in response.text
-    assert "http://" not in response.text
+    assert response.text.count("http://") == 1
+    assert "http://www.w3.org/2000/svg" in response.text
+    assert not re.search(r"(?:src|href)\s*=\s*['\"]https?://", response.text, re.I)
 
 
 @pytest.mark.parametrize("arguments", [[], ["serve"]])
@@ -533,13 +537,292 @@ def test_summary_section_and_single_refresh_timer() -> None:
 
 
 @asynccontextmanager
-async def _browser_page() -> AsyncGenerator[Page, None]:
+async def _browser_page(*, mobile: bool = False) -> AsyncGenerator[Page, None]:
     async with async_playwright() as playwright:
         browser = await playwright.chromium.launch()
         try:
-            yield await browser.new_page()
+            if mobile:
+                page = await browser.new_page(
+                    viewport={'width': 390, 'height': 844},
+                    is_mobile=True,
+                    has_touch=True,
+                )
+            else:
+                page = await browser.new_page()
+            yield page
         finally:
             await browser.close()
+
+
+async def _fulfill_test_app_request(route: Route, client: TestClient) -> None:
+    response = client.request(route.request.method, route.request.url)
+    await route.fulfill(
+        status=response.status_code,
+        body=response.content,
+        content_type=response.headers.get('content-type', 'application/json'),
+    )
+
+
+async def _install_dashboard_app_bridge(
+    page: Page,
+    client: TestClient,
+    history_requests: list[str],
+    *,
+    now_ms: int,
+) -> None:
+    await page.add_init_script(f"""
+      window.testNowMs = {now_ms};
+      Date.now = () => window.testNowMs;
+      window.eventSourceCount = 0;
+      window.dashboardEvents = null;
+      window.EventSource = class {{
+        constructor(url) {{
+          window.eventSourceCount += 1;
+          window.dashboardEvents = this;
+          this.url = url;
+        }}
+      }};
+    """)
+
+    async def serve(route: Route) -> None:
+        if '/api/history' in route.request.url:
+            history_requests.append(route.request.url)
+        await _fulfill_test_app_request(route, client)
+
+    await page.route('http://monbat.test/**', serve)
+
+
+def test_history_tab_loads_on_entry_stays_static_and_reloads_on_reentry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def scenario() -> None:
+        now = [1_750_000_000.0]
+        monkeypatch.setattr(app_module.time, 'time', lambda: now[0])
+        telemetry = _make_telemetry(now[0] - 10)
+        repo = StubTelemetryRepository(
+            latest={'one': telemetry},
+            history={'one': [_make_telemetry(now[0] - 60)]},
+        )
+        config = _make_config(
+            batteries=(BatteryConfig('one', 'Cabin Battery', 'synthetic-address'),),
+            poll_interval_seconds=47.0,
+        )
+        with TestClient(build_app(config, repo, start_poller=False)) as client:
+            async with _browser_page() as page:
+                history_requests: list[str] = []
+                await _install_dashboard_app_bridge(
+                    page, client, history_requests, now_ms=int(now[0] * 1000),
+                )
+                await page.goto('http://monbat.test/')
+
+                dashboard_tab = page.get_by_role('tab', name='Dashboard')
+                history_tab = page.get_by_role('tab', name='History')
+                await expect(dashboard_tab).to_have_attribute('aria-selected', 'true')
+                await expect(history_tab).to_have_attribute('aria-selected', 'false')
+                assert history_requests == []
+                assert await page.evaluate('window.eventSourceCount') == 1
+
+                await dashboard_tab.focus()
+                await page.keyboard.press('ArrowRight')
+                await expect(history_tab).to_have_attribute('aria-selected', 'true')
+                await expect(page.locator('#history-window')).to_be_visible()
+                assert len(history_requests) == 1
+                assert history_requests[0].endswith('/api/history?hours=24')
+                first_window = await page.locator('#history-window').inner_text()
+
+                now[0] += 3600
+                await page.evaluate('(now) => window.testNowMs = now * 1000', now[0])
+                repo.latest['one'] = replace(telemetry, soc_percent=73.0)
+                snapshot = {
+                    'latest': client.get('/api/latest').json(),
+                    'summary': client.get('/api/summary').json(),
+                }
+                await page.evaluate(
+                    '(value) => dashboardEvents.onmessage({data: JSON.stringify(value)})',
+                    snapshot,
+                )
+                await expect(page.locator('#batteries-grid')).to_contain_text('73.0%')
+                await expect(page.locator('#history-window')).to_have_text(first_window)
+                assert len(history_requests) == 1
+                assert await page.evaluate('window.eventSourceCount') == 1
+
+                await history_tab.click()
+                assert len(history_requests) == 1
+                await dashboard_tab.click()
+                await history_tab.click()
+                await expect(page.locator('#history-window')).not_to_have_text(first_window)
+                assert len(history_requests) == 2
+                assert await page.evaluate('window.eventSourceCount') == 1
+
+    asyncio.run(scenario())
+
+
+def test_history_chart_uses_stored_soc_and_strict_configured_gap_boundary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def scenario() -> None:
+        now = 1_750_000_000.0
+        monkeypatch.setattr(app_module.time, 'time', lambda: now)
+        name = '<img src=x onerror="window.injected=true"> & “Cabin”'
+        first_time = now - 120
+        history = [
+            replace(_make_telemetry(first_time), soc_percent=0.0),
+            replace(_make_telemetry(first_time + 19), soc_percent=100.0),
+            replace(_make_telemetry(first_time + 39), soc_percent=37.5),
+            replace(_make_telemetry(first_time + 59.001), soc_percent=62.5),
+            replace(_make_telemetry(now - 24 * 3600 - 1), soc_percent=25.0),
+            replace(_make_telemetry(now + 1), soc_percent=90.0),
+        ]
+        repo = StubTelemetryRepository(
+            history={
+                'one': history,
+                'two': [replace(_make_telemetry(now - 30), soc_percent=100.0)],
+            }
+        )
+        config = _make_config(
+            batteries=(
+                BatteryConfig('one', name, 'synthetic-one'),
+                BatteryConfig('two', 'Second Battery', 'synthetic-two'),
+                BatteryConfig('three', 'No history Battery', 'synthetic-three'),
+            ),
+            poll_interval_seconds=20.0,
+        )
+        with TestClient(build_app(config, repo, start_poller=False)) as client:
+            async with _browser_page() as page:
+                await page.set_viewport_size({'width': 1280, 'height': 800})
+                history_requests: list[str] = []
+                await _install_dashboard_app_bridge(
+                    page, client, history_requests, now_ms=int(now * 1000),
+                )
+                await page.goto('http://monbat.test/')
+                await page.get_by_role('tab', name='History').click()
+                await expect(page.locator('#history-chart')).to_be_visible()
+                assert history_requests[0].endswith('/api/history?hours=24')
+
+                await expect(page.get_by_text(name, exact=True)).to_be_visible()
+                await expect(page.get_by_text('Second Battery', exact=True)).to_be_visible()
+                await expect(page.get_by_text('No history Battery', exact=True)).to_be_visible()
+                assert await page.evaluate('window.injected === undefined')
+                assert await page.locator('#history-chart img, #history-chart script').count() == 0
+
+                color_values = await page.locator('.history-legend-swatch').evaluate_all(
+                    "items => items.map(item => getComputedStyle(item).backgroundColor)"
+                )
+                assert len(color_values) == 3
+                assert len(set(color_values)) == 3
+
+                await expect(page.get_by_role('button', name=re.compile(r', 0\.0% SOC$'))).to_have_count(1)
+                await expect(page.get_by_role('button', name=re.compile(r', 100\.0% SOC$'))).to_have_count(2)
+                await expect(page.get_by_role('button', name=re.compile(r', 37\.5% SOC$'))).to_have_count(1)
+                await expect(page.get_by_role('button', name=re.compile(r', 62\.5% SOC$'))).to_have_count(1)
+                assert await page.get_by_role('button', name=re.compile(r'% SOC')).count() == 5
+
+                first_battery_segments = page.get_by_role(
+                    'img', name=re.compile(r'3 connected readings')
+                )
+                await expect(first_battery_segments).to_have_count(1)
+                local_start_label = await page.evaluate(
+                    "new Date((window.testNowMs / 1000 - 86400) * 1000).toLocaleTimeString(undefined, {hour: '2-digit', minute: '2-digit', hourCycle: 'h23'})"
+                )
+                await expect(page.locator('.history-x-axis-label').first).to_have_text(local_start_label)
+                await expect(page.locator('.history-y-axis-label').first).to_have_text('100%')
+                await expect(page.locator('.history-y-axis-label').last).to_have_text('0%')
+
+    asyncio.run(scenario())
+
+
+def test_history_loading_empty_failure_and_retry_states(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def scenario() -> None:
+        now = [1_750_000_000.0]
+        monkeypatch.setattr(app_module.time, 'time', lambda: now[0])
+        repo = StubTelemetryRepository(
+            history={'one': [replace(_make_telemetry(now[0] - 60), soc_percent=54.0)]},
+        )
+        config = _make_config(
+            batteries=(BatteryConfig('one', 'Workshop Battery', 'synthetic-address'),),
+        )
+        with TestClient(build_app(config, repo, start_poller=False)) as client:
+            async with _browser_page() as page:
+                await page.add_init_script(f"""
+                  window.testNowMs = {int(now[0] * 1000)};
+                  Date.now = () => window.testNowMs;
+                  window.EventSource = class {{ constructor() {{ window.eventSourceCount = (window.eventSourceCount || 0) + 1; }} }};
+                """)
+                history_requests: list[str] = []
+
+                async def serve(route: Route) -> None:
+                    if '/api/history' in route.request.url:
+                        history_requests.append(route.request.url)
+                        if len(history_requests) == 1:
+                            await asyncio.sleep(0.2)
+                        elif len(history_requests) == 2:
+                            await route.fulfill(
+                                status=503, body='{}', content_type='application/json',
+                            )
+                            return
+                    await _fulfill_test_app_request(route, client)
+
+                await page.route('http://monbat.test/**', serve)
+                await page.goto('http://monbat.test/')
+                history_tab = page.get_by_role('tab', name='History')
+                await history_tab.click()
+                await expect(page.locator('#history-state')).to_have_text('Loading SOC history…')
+                await expect(page.get_by_role('button', name=re.compile(r', 54\.0% SOC$'))).to_be_visible()
+
+                await page.get_by_role('tab', name='Dashboard').click()
+                await history_tab.click()
+                await expect(page.locator('#history-state')).to_contain_text('Unable to load SOC history')
+                await expect(page.locator('#history-chart-content')).to_be_hidden()
+                await expect(page.locator('#history-window')).to_be_hidden()
+                assert await page.locator('#history-chart [role="button"]').count() == 0
+
+                repo.history['one'] = []
+                await page.get_by_role('tab', name='Dashboard').click()
+                await history_tab.click()
+                await expect(page.locator('#history-state')).to_have_text('No readings in the last 24 hours')
+                assert len(history_requests) == 3
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize('mobile', [False, True])
+def test_history_reading_details_work_with_mouse_and_touch(mobile: bool) -> None:
+    async def scenario() -> None:
+        now = 1_750_000_000.0
+        repo = StubTelemetryRepository(
+            history={
+                'one': [
+                    replace(_make_telemetry(now - 7200), soc_percent=35.0),
+                    replace(_make_telemetry(now - 600), soc_percent=65.0),
+                ]
+            }
+        )
+        config = _make_config(
+            batteries=(BatteryConfig('one', 'Workshop Battery', 'synthetic-address'),),
+            poll_interval_seconds=20_000.0,
+        )
+        with TestClient(build_app(config, repo, start_poller=False)) as client:
+            async with _browser_page(mobile=mobile) as page:
+                history_requests: list[str] = []
+                await _install_dashboard_app_bridge(
+                    page, client, history_requests, now_ms=int(now * 1000),
+                )
+                await page.goto('http://monbat.test/')
+                await page.get_by_role('tab', name='History').click()
+                reading = page.get_by_role('button', name=re.compile(r', 65\.0% SOC$'))
+                detail = await reading.get_attribute('aria-label')
+                assert detail is not None
+                if mobile:
+                    await reading.tap()
+                else:
+                    await reading.hover()
+                await expect(page.locator('#history-tooltip')).to_have_text(detail)
+                assert 'Workshop Battery' in detail
+                assert '65.0% SOC' in detail
+
+    asyncio.run(scenario())
 
 
 @pytest.mark.parametrize("has_telemetry", [False, True])
@@ -562,11 +845,7 @@ def test_dashboard_renders_config_labels_literally(
                         snapshot = {'latest': client.get('/api/latest').json(), 'summary': client.get('/api/summary').json()}
                         await route.fulfill(status=200, body=f"data: {json.dumps(snapshot)}\n\n", content_type='text/event-stream')
                         return
-                    response = client.request(route.request.method, route.request.url)
-                    await route.fulfill(
-                        status=response.status_code, body=response.content,
-                        content_type=response.headers['content-type'],
-                    )
+                    await _fulfill_test_app_request(route, client)
 
                 await browser_page.route('http://monbat.test/**', serve)
                 await browser_page.goto('http://monbat.test/')

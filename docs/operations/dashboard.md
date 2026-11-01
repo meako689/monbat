@@ -131,6 +131,23 @@ Totals disappear when any Battery has missing/stale readings or nonpositive
 full charge capacity. Individual cards retain their last readings. A summary
 request failure also hides the totals.
 
+## SOC history
+
+The Dashboard opens on the Dashboard tab. The History tab requests
+`/api/history?hours=24` each time it is entered and shows recorded effective
+SOC for configured Batteries in the preceding 24 hours. The chart ends at the
+time History was entered, uses the browser's local time labels, and stays fixed
+until the user leaves and re-enters the tab. It plots stored SOC on a fixed
+0–100% scale, keeps isolated readings visible, and breaks a Battery's trace
+only when consecutive timestamps differ by more than the configured
+`poll_interval_seconds`; equality remains connected.
+
+The History tab shows loading, empty, and request-failure states. A failed
+request is retried on the next entry. Switching tabs leaves the page's single
+SSE connection active, so Dashboard readings continue to update while History
+is open. The chart uses embedded SVG and local JavaScript without external
+assets.
+
 ## API
 
 | Endpoint | Behavior |

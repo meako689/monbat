@@ -1,6 +1,6 @@
 ## Destination
 
-Technical architecture and implementation specification for `monbat`: an offgrid battery monitoring service primarily for Linux Mint, also supporting macOS, tracking 2 Redodo LiFePO4 batteries over BLE via FastAPI and SQLite, with an interactive discovery script, a live dashboard, and historical graphing planned for Iteration 2.
+Technical architecture and implementation specification for `monbat`: an offgrid battery monitoring service primarily for Linux Mint, also supporting macOS, tracking 2 Redodo LiFePO4 batteries over BLE via FastAPI and SQLite, with an interactive discovery script, a live dashboard, an initial SOC History tab, and broader historical graphing planned for Iteration 2.
 
 ## Notes
 
@@ -35,6 +35,21 @@ Technical architecture and implementation specification for `monbat`: an offgrid
   manual default/explicit service launch forms and preserves log levels and
   process identity guards. 191 offline tests and script typechecking pass;
   both review axes pass. No additional service restart required.
+
+- **[30 Implement SOC History](issues/30-implement-soc-history-tab.md)**:
+  Resolved locally on 2026-11-01 from the confirmed
+  [specification](../monbat-history/spec.md) and
+  [design](issues/29-charging-history-tab.md). The page now has accessible
+  Dashboard/History tabs and a static 24-hour stored effective-SOC chart with
+  configured Battery traces, local-time labels, a fixed 0–100% scale, and
+  strict configured polling gaps. Tab changes preserve the single SSE stream;
+  APIs, storage, BLE, and collection timing are unchanged. The offline suite
+  passes (197 passed, 2 live tests deselected), app typechecking passes, and
+  desktop/mobile layouts were inspected. Standards review found no documented
+  violations; the review's history-snapshot grouping and repeated test-app
+  forwarding findings were addressed. Spec review found no behavior mismatch
+  or scope creep.
+  [Dashboard behavior](../../docs/operations/dashboard.md).
 
 - **[23 Show protocol fields in Battery details](issues/23-display-protocol-fields-without-overclaiming.md)**:
   Resolved locally on 2026-11-01: original cell slots, qualified balancing,
@@ -113,14 +128,9 @@ the approved behavior; implementation is still pending.
 
 ## Not yet specified
 
-- **[29 Charging history tab](issues/29-charging-history-tab.md)**:
-  Resolved: user confirmed SOC per Battery, Dashboard/History tabs, a static
-  last-24-hours view, and strict gaps above configured `poll_interval_seconds`.
-  [Specification](../monbat-history/spec.md) published; browser/app tests accepted.
-  [30 Implement SOC History](issues/30-implement-soc-history-tab.md) is open,
-  ready-for-agent, and unblocked.
-
-- **Iteration 2 historical graphing UI**: Aggregation and downsampling queries over recorded SQLite telemetry, and visual charting presentation (lightweight client-side Chart.js/uPlot vs server-rendered SVG).
+- **Broader Iteration 2 historical graphing**: Additional aggregation and
+  downsampling queries over recorded Telemetry, and historical views beyond
+  the initial static 24-hour per-Battery SOC chart.
 - **Additional Battery Bank metrics**: Net current, combined capacity display,
   and time-to-empty/time-to-full estimates. Parallel SOC and net watts are
   specified in ticket 12.

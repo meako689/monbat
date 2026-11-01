@@ -318,6 +318,28 @@ _DASHBOARD_HTML = """<!DOCTYPE html>
     .empty { color:var(--muted); }
     .protections { color:var(--red); border:1px solid var(--red); padding:.8rem; border-radius:7px; }
     .bms-state { color:var(--muted); font-size:.85rem; }
+    .view-tabs { display:flex; gap:.4rem; margin-bottom:1rem; border-bottom:1px solid var(--border); }
+    .view-tab { min-height:44px; padding:.55rem 1rem; border:0; border-bottom:3px solid transparent; background:transparent; color:var(--muted); font:inherit; cursor:pointer; }
+    .view-tab[aria-selected="true"] { border-bottom-color:var(--green); color:var(--text); font-weight:650; }
+    .view-tab:focus-visible,.history-reading:focus-visible { outline:3px solid #8ab4ff; outline-offset:3px; }
+    .history-panel h2 { margin:.2rem 0 .4rem; font-size:1.2rem; }
+    .history-note { color:var(--muted); }
+    .history-state { margin:1rem 0; color:var(--muted); }
+    .history-window { color:var(--muted); font-size:.9rem; font-variant-numeric:tabular-nums; }
+    .history-chart-content { margin-top:1rem; }
+    .history-chart { display:block; width:100%; height:320px; overflow:visible; }
+    .history-grid-line { stroke:#39414b; stroke-width:1; }
+    .history-axis-line { stroke:#8793a1; stroke-width:1; }
+    .history-axis-label { fill:var(--muted); font:12px system-ui,-apple-system,"Segoe UI",sans-serif; }
+    .history-legend { display:flex; flex-wrap:wrap; gap:.5rem 1.1rem; margin:1rem 0; padding:0; list-style:none; }
+    .history-legend-item { display:flex; align-items:center; gap:.5rem; min-width:0; }
+    .history-legend-swatch { width:1rem; height:.25rem; flex:none; border-radius:2px; background:var(--series-color); }
+    .history-chart-caption { color:var(--muted); font-size:.85rem; }
+    .history-tooltip { min-height:1.8rem; margin:.5rem 0 0; padding:.4rem .65rem; background:#1c2026; border-radius:5px; font-variant-numeric:tabular-nums; }
+    .history-reading { cursor:pointer; touch-action:manipulation; }
+    .history-reading-target { fill:transparent; pointer-events:all; }
+    .history-reading-dot { stroke:var(--bg); stroke-width:2; vector-effect:non-scaling-stroke; }
+    .history-reading:hover .history-reading-dot,.history-reading:focus .history-reading-dot { stroke:var(--text); stroke-width:3; }
     @media (max-width:520px) { body { padding:1rem; } header { align-items:flex-start; flex-direction:column; } }
   </style>
 </head>
@@ -326,15 +348,52 @@ _DASHBOARD_HTML = """<!DOCTYPE html>
     <h1>monbat</h1>
     <div id="connection-status" role="status">Loading battery readings…</div>
   </header>
-  <section class="card" id="bank-summary" aria-label="Parallel Battery Bank" aria-live="polite" style="margin-bottom:1rem">
-    <div class="card-title">Battery Bank · Parallel</div>
-    <div class="empty">Fresh readings from all Batteries are required.</div>
+  <nav class="view-tabs" role="tablist" aria-label="Dashboard views">
+    <button class="view-tab" id="dashboard-tab" type="button" role="tab" aria-controls="dashboard-panel" aria-selected="true" tabindex="0">Dashboard</button>
+    <button class="view-tab" id="history-tab" type="button" role="tab" aria-controls="history-panel" aria-selected="false" tabindex="-1">History</button>
+  </nav>
+  <main id="dashboard-panel" role="tabpanel" aria-labelledby="dashboard-tab" tabindex="0">
+    <section class="card" id="bank-summary" aria-label="Parallel Battery Bank" aria-live="polite" style="margin-bottom:1rem">
+      <div class="card-title">Battery Bank · Parallel</div>
+      <div class="empty">Fresh readings from all Batteries are required.</div>
+    </section>
+    <div class="grid" id="batteries-grid" aria-live="polite"></div>
+  </main>
+  <section class="history-panel" id="history-panel" role="tabpanel" aria-labelledby="history-tab" tabindex="0" hidden>
+    <h2>State of charge history</h2>
+    <p class="history-note">Recorded Battery SOC during the preceding 24 hours.</p>
+    <p class="history-window" id="history-window" hidden></p>
+    <div class="history-state" id="history-state" role="status" aria-live="polite" hidden></div>
+    <div class="history-chart-content" id="history-chart-content" hidden>
+      <ul class="history-legend" id="history-legend" aria-label="Configured Batteries"></ul>
+      <figure>
+        <svg class="history-chart" id="history-chart" role="group" aria-label="State of charge history chart"></svg>
+        <figcaption class="history-chart-caption">SOC scale is fixed from 0% to 100%; time labels use local time.</figcaption>
+      </figure>
+      <p class="history-tooltip" id="history-tooltip" role="status" aria-live="polite">Hover over or focus a reading, or tap it, to inspect its Battery, time, and SOC.</p>
+    </div>
   </section>
-  <main class="grid" id="batteries-grid" aria-live="polite"></main>
   <script>
+    const dashboardConfig = __DASHBOARD_CONFIG__;
     const bankSummary = document.getElementById('bank-summary');
     const grid = document.getElementById('batteries-grid');
     const connectionStatus = document.getElementById('connection-status');
+    const dashboardTab = document.getElementById('dashboard-tab');
+    const historyTab = document.getElementById('history-tab');
+    const dashboardPanel = document.getElementById('dashboard-panel');
+    const historyPanel = document.getElementById('history-panel');
+    const historyWindow = document.getElementById('history-window');
+    const historyState = document.getElementById('history-state');
+    const historyChartContent = document.getElementById('history-chart-content');
+    const historyLegend = document.getElementById('history-legend');
+    const historyChart = document.getElementById('history-chart');
+    const historyTooltip = document.getElementById('history-tooltip');
+    const tabs = [dashboardTab, historyTab];
+    const historyHours = 24;
+    const svgNamespace = 'http://www.w3.org/2000/svg';
+    let activeTab = dashboardTab;
+    let historyLoadVersion = 0;
+    let currentHistory = null;
     const statusLabels = {
       'no-reading-yet': 'No reading yet',
       offline: 'Offline',
@@ -358,6 +417,170 @@ _DASHBOARD_HTML = """<!DOCTYPE html>
       const minutes = pad(date.getMinutes());
       const seconds = pad(date.getSeconds());
       return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+    }
+
+    function createSvgElement(name, attributes = {}) {
+      const element = document.createElementNS(svgNamespace, name);
+      for (const [attribute, value] of Object.entries(attributes)) {
+        element.setAttribute(attribute, String(value));
+      }
+      return element;
+    }
+
+    function historyColor(index) {
+      const hue = (198 + index * 137.508) % 360;
+      return `hsl(${hue} 80% 66%)`;
+    }
+
+    function formatHistoryTime(date) {
+      return date.toLocaleTimeString(undefined, {
+        hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+      });
+    }
+
+    function drawHistoryChart(snapshot) {
+      const {readings, windowStart, windowEnd} = snapshot;
+      historyLegend.replaceChildren();
+      historyChart.replaceChildren();
+
+      const width = Math.max(1, historyChart.clientWidth);
+      const height = 320;
+      const left = 56;
+      const right = 14;
+      const top = 14;
+      const bottom = 36;
+      const plotWidth = width - left - right;
+      const plotHeight = height - top - bottom;
+      const xFor = timestamp => left + (timestamp - windowStart) / (windowEnd - windowStart) * plotWidth;
+      const yFor = soc => top + (100 - soc) / 100 * plotHeight;
+      historyChart.setAttribute('viewBox', `0 0 ${width} ${height}`);
+      historyChart.setAttribute('aria-labelledby', 'history-chart-title');
+      const chartTitle = createSvgElement('title', {id: 'history-chart-title'});
+      chartTitle.textContent = 'State of charge by Battery during the preceding 24 hours';
+      historyChart.append(chartTitle);
+
+      for (const soc of [100, 75, 50, 25, 0]) {
+        const y = yFor(soc);
+        const line = createSvgElement('line', {
+          class: 'history-grid-line', x1: left, y1: y, x2: width - right, y2: y,
+        });
+        const label = createSvgElement('text', {
+          class: 'history-axis-label history-y-axis-label',
+          x: left - 9, y: y + 4, 'text-anchor': 'end',
+        });
+        label.textContent = `${soc}%`;
+        historyChart.append(line, label);
+      }
+
+      historyChart.append(
+        createSvgElement('line', {
+          class: 'history-axis-line', x1: left, y1: top, x2: left, y2: height - bottom,
+        }),
+        createSvgElement('line', {
+          class: 'history-axis-line', x1: left, y1: height - bottom,
+          x2: width - right, y2: height - bottom,
+        }),
+      );
+
+      for (let tick = 0; tick <= 4; tick += 1) {
+        const timestamp = windowStart + (windowEnd - windowStart) * tick / 4;
+        const x = xFor(timestamp);
+        const label = createSvgElement('text', {
+          class: 'history-axis-label history-x-axis-label',
+          x, y: height - 11,
+          'text-anchor': tick === 0 ? 'start' : tick === 4 ? 'end' : 'middle',
+        });
+        label.textContent = formatHistoryTime(new Date(timestamp * 1000));
+        historyChart.append(label);
+      }
+
+      const readingsByBattery = new Map(
+        dashboardConfig.batteries.map(battery => [battery.id, []]),
+      );
+      for (const reading of readings) {
+        readingsByBattery.get(reading.battery_id)?.push(reading);
+      }
+
+      dashboardConfig.batteries.forEach((battery, index) => {
+        const color = historyColor(index);
+        const legendItem = document.createElement('li');
+        legendItem.className = 'history-legend-item';
+        const swatch = document.createElement('span');
+        swatch.className = 'history-legend-swatch';
+        swatch.style.setProperty('--series-color', color);
+        swatch.setAttribute('aria-hidden', 'true');
+        const batteryName = document.createElement('span');
+        batteryName.textContent = battery.name;
+        legendItem.append(swatch, batteryName);
+        historyLegend.append(legendItem);
+
+        const batteryReadings = readingsByBattery.get(battery.id) || [];
+        batteryReadings.sort((first, second) => first.timestamp - second.timestamp);
+        const series = createSvgElement('g', {
+          class: 'history-series', role: 'group', 'aria-label': battery.name,
+        });
+        series.setAttribute('data-battery-id', battery.id);
+        let segment = [];
+        let previousTimestamp = null;
+        const segments = [];
+        for (const reading of batteryReadings) {
+          if (
+            previousTimestamp !== null
+            && reading.timestamp - previousTimestamp > dashboardConfig.pollIntervalSeconds
+          ) {
+            segments.push(segment);
+            segment = [];
+          }
+          segment.push(reading);
+          previousTimestamp = reading.timestamp;
+        }
+        if (segment.length > 0) segments.push(segment);
+
+        for (const connectedReadings of segments) {
+          if (connectedReadings.length < 2) continue;
+          const points = connectedReadings.map(reading => `${xFor(reading.timestamp)},${yFor(reading.soc_percent)}`).join(' ');
+          const first = connectedReadings[0];
+          const last = connectedReadings[connectedReadings.length - 1];
+          const line = createSvgElement('polyline', {
+            points, fill: 'none', stroke: color, 'stroke-width': 3,
+            'stroke-linecap': 'round', 'stroke-linejoin': 'round', role: 'img',
+            'aria-label': `${battery.name} SOC trace segment: ${connectedReadings.length} connected readings, ${formatLocalTimestamp(new Date(first.timestamp * 1000))} to ${formatLocalTimestamp(new Date(last.timestamp * 1000))}`,
+          });
+          series.append(line);
+        }
+
+        for (const reading of batteryReadings) {
+          const timestamp = new Date(reading.timestamp * 1000);
+          const detail = `${battery.name}, ${formatLocalTimestamp(timestamp)}, ${reading.soc_percent.toFixed(1)}% SOC`;
+          const x = xFor(reading.timestamp);
+          const y = yFor(reading.soc_percent);
+          const point = createSvgElement('g', {
+            class: 'history-reading', role: 'button', tabindex: 0, 'aria-label': detail,
+          });
+          const title = createSvgElement('title');
+          title.textContent = detail;
+          point.append(
+            title,
+            createSvgElement('circle', {
+              class: 'history-reading-target', cx: x, cy: y, r: 12,
+            }),
+            createSvgElement('circle', {
+              class: 'history-reading-dot', cx: x, cy: y, r: 4.5, fill: color,
+            }),
+          );
+          const showDetail = () => { historyTooltip.textContent = detail; };
+          point.addEventListener('pointerenter', showDetail);
+          point.addEventListener('focus', showDetail);
+          point.addEventListener('click', showDetail);
+          point.addEventListener('keydown', event => {
+            if (event.key !== 'Enter' && event.key !== ' ') return;
+            event.preventDefault();
+            showDetail();
+          });
+          series.append(point);
+        }
+        historyChart.append(series);
+      });
     }
 
     function renderBattery(view) {
@@ -446,6 +669,82 @@ _DASHBOARD_HTML = """<!DOCTYPE html>
       return response.json();
     }
 
+    function activateTab(tab) {
+      if (tab === activeTab) return;
+      activeTab = tab;
+      for (const candidate of tabs) {
+        const selected = candidate === tab;
+        candidate.setAttribute('aria-selected', String(selected));
+        candidate.tabIndex = selected ? 0 : -1;
+      }
+      const showHistory = tab === historyTab;
+      dashboardPanel.hidden = showHistory;
+      historyPanel.hidden = !showHistory;
+      if (showHistory) void loadHistory();
+      else historyLoadVersion += 1;
+    }
+
+    for (const tab of tabs) {
+      tab.addEventListener('click', () => activateTab(tab));
+      tab.addEventListener('keydown', event => {
+        const index = tabs.indexOf(tab);
+        let nextIndex = index;
+        if (event.key === 'ArrowRight') nextIndex = (index + 1) % tabs.length;
+        else if (event.key === 'ArrowLeft') nextIndex = (index + tabs.length - 1) % tabs.length;
+        else if (event.key === 'Home') nextIndex = 0;
+        else if (event.key === 'End') nextIndex = tabs.length - 1;
+        else return;
+        event.preventDefault();
+        tabs[nextIndex].focus();
+        activateTab(tabs[nextIndex]);
+      });
+    }
+
+    async function loadHistory() {
+      const version = ++historyLoadVersion;
+      const windowEnd = Date.now() / 1000;
+      const windowStart = windowEnd - historyHours * 60 * 60;
+      currentHistory = null;
+      historyWindow.hidden = true;
+      historyChartContent.hidden = true;
+      historyChart.replaceChildren();
+      historyLegend.replaceChildren();
+      historyState.textContent = 'Loading SOC history…';
+      historyState.hidden = false;
+      try {
+        const rows = await fetchJson('/api/history?hours=24');
+        if (version !== historyLoadVersion || activeTab !== historyTab) return;
+        if (!Array.isArray(rows)) throw new Error('Invalid history response');
+        const batteryIds = new Set(dashboardConfig.batteries.map(battery => battery.id));
+        const readings = rows.filter(row =>
+          batteryIds.has(row.battery_id)
+          && Number.isFinite(row.timestamp)
+          && row.timestamp >= windowStart
+          && row.timestamp <= windowEnd
+          && Number.isFinite(row.soc_percent)
+        );
+        if (readings.length === 0) {
+          historyState.textContent = 'No readings in the last 24 hours';
+          return;
+        }
+        historyWindow.textContent = `24-hour window: ${formatLocalTimestamp(new Date(windowStart * 1000))} – ${formatLocalTimestamp(new Date(windowEnd * 1000))} (local time)`;
+        historyWindow.hidden = false;
+        historyState.hidden = true;
+        historyChartContent.hidden = false;
+        currentHistory = {readings, windowStart, windowEnd};
+        drawHistoryChart(currentHistory);
+        historyTooltip.textContent = 'Hover over or focus a reading, or tap it, to inspect its Battery, time, and SOC.';
+      } catch {
+        if (version !== historyLoadVersion || activeTab !== historyTab) return;
+        historyState.textContent = 'Unable to load SOC history. Return to History to try again.';
+      }
+    }
+
+    window.addEventListener('resize', () => {
+      if (activeTab !== historyTab || currentHistory === null) return;
+      drawHistoryChart(currentHistory);
+    });
+
     const events = new EventSource('/api/events');
     events.onmessage = event => {
       const snapshot = JSON.parse(event.data);
@@ -495,7 +794,19 @@ def build_app(
 
     @app.get("/", response_class=HTMLResponse)
     async def dashboard() -> HTMLResponse:
-        return HTMLResponse(_DASHBOARD_HTML)
+        page_config = json.dumps({
+            "pollIntervalSeconds": config.poller.poll_interval_seconds,
+            "batteries": [
+                {"id": battery.id, "name": battery.name}
+                for battery in config.batteries
+            ],
+        }, allow_nan=False, ensure_ascii=True)
+        page_config = (
+            page_config.replace("<", "\\u003c")
+            .replace(">", "\\u003e")
+            .replace("&", "\\u0026")
+        )
+        return HTMLResponse(_DASHBOARD_HTML.replace("__DASHBOARD_CONFIG__", page_config))
 
     @app.post("/api/refresh")
     async def request_refresh() -> dict[str, str]:
