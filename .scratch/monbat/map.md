@@ -91,7 +91,10 @@ the approved behavior; implementation is still pending.
   Required database/JSON callers adapted; ticket 22 retains full boundary and
   API validation, ticket 23 retains Dashboard presentation. 143 offline tests
   pass; changed production modules pass typechecking. Both review axes pass.
-  No deployment or live hardware validation.
+  Linux deployment of `f94e072` completed on 2026-11-01 with a fresh database;
+  both Batteries saved valid responses and the Dashboard smoke test passed
+  through an SSH tunnel. [Evidence](validation/21-20261101-deployment.md).
+  Long-run and sleep/resume validation remain pending.
 
 Start with the [implementation handoff](../../docs/protocol/implementation-handoff.md).
 It contains the final contracts, current-code touchpoints, and validation plan.

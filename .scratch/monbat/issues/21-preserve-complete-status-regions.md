@@ -84,3 +84,14 @@ through repeated writes and preserve incompatible database bytes. Full offline
 suite: 143 passed, 2 live tests deselected. `ty check` passes for all three changed
 production modules; `git diff --check` and credential/local-identifier scan pass.
 Standards and specification reviews have no remaining findings.
+
+
+- 2026-11-01: User authorized deploying ticket 21 first for hardware observation.
+  `f94e072` is deployed and running on Linux with a fresh database. Original
+  config/source and a consistent database backup are preserved privately.
+  Startup saved both Batteries; attributed-format frame/storage/history checks
+  and a real Chromium Dashboard check through an SSH tunnel passed. Final persistent-storage validation checked all 36 rows (18 per Battery),
+  matching complete responses byte-for-byte. Both clients released after the
+  user closed Dashboard tabs. The old database remains unchanged. Direct Dashboard
+  reachability from the Mac remains unavailable. Long-cadence and sleep/resume
+  validation remain separate. [Deployment evidence](../validation/21-20261101-deployment.md).
