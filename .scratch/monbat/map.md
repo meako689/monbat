@@ -49,6 +49,10 @@ Technical architecture and implementation specification for `monbat`: an offgrid
   violations; the review's history-snapshot grouping and repeated test-app
   forwarding findings were addressed. Spec review found no behavior mismatch
   or scope creep.
+  Deployed `0b2241c` to Linux; fresh readings from both Batteries and the live
+  browser check passed. The Dashboard and History behavior worked through the
+  tunnel; post-grace connection cleanup passed, while long background cadence
+  remains unobserved. [Deployment evidence](validation/30-20261101-deployment.md).
   [Dashboard behavior](../../docs/operations/dashboard.md).
 
 - **[23 Show protocol fields in Battery details](issues/23-display-protocol-fields-without-overclaiming.md)**:

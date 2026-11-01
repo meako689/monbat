@@ -54,6 +54,15 @@ collection timing are unchanged.
   test-app request forwarding now uses one helper. Spec review found no
   behavior mismatch or scope creep.
 
+## Deployment
+
+- Deployed `0b2241cc7e0c2530554a9d17b74b3ccb4e0421f9` from
+  `fe26b333b3c50857b3ba4ea7f36086b32107823e`. The deployment script returned
+  `status: deployed` after fresh readings from both Batteries; configuration
+  and database were retained. Browser validation and post-grace connection
+  cleanup passed. Long background cadence was not observed. See the
+  [deployment evidence](../validation/30-20261101-deployment.md).
+
 ## References
 
 - [Design interview](29-charging-history-tab.md)
