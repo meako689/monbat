@@ -83,3 +83,14 @@ exact-capture assertion. Typechecking passed for changed production modules,
 the shared protocol fixture, and DB/API tests; `git diff --check` passed. Tests
 use the attributed B4 capture and checksum-correct edge variants. Ticket 22
 was not deployed or validated on live hardware.
+
+
+- 2026-11-01: Deployed `92316da` on Linux after user authorization. Candidate
+  accepted the existing ticket-21 schema and all 496 backup readings before
+  deployment. The script retained the existing database and config. Its first
+  shutdown attempt waited for open SSE connections; source stayed unchanged.
+  After the user closed tabs, retry completed and both Batteries saved readings.
+  Final live checks passed for 658 stored responses/history rows, latest/SSE
+  raw omission, visible browser updates through an SSH tunnel, and retained
+  client release. No service warning/error; long-cadence and sleep/resume checks
+  remain pending. [Deployment evidence](../validation/22-20261101-deployment.md).

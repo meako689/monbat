@@ -25,7 +25,11 @@ Technical architecture and implementation specification for `monbat`: an offgrid
   response BLOB retrieval. Incompatible databases preserve their files. The
   unchanged attributed capture round-trips through `/api/history` as exact hex.
   The offline suite passed (181 passed, 2 live integration tests deselected),
-  and typechecking passed. No live hardware validation.
+  and typechecking passed. Linux deployment of `92316da` retained the existing
+  database/config and passed live storage/API/SSE/browser checks for both
+  Batteries, including 658 validated response/history rows and client release.
+  [Evidence](validation/22-20261101-deployment.md). Long-cadence and physical
+  sleep/resume validation remain pending.
 
 - **[01 Python and uv environment](issues/01-python-315-and-uv-environment.md)**: Project requires Python 3.15 and uses `uv`; `uv sync` created the macOS ARM environment. Linux remains the primary deployment, with macOS support through Bleak and opaque platform-specific device addresses.
 - **[02 Redodo BMS BLE protocol and bleak driver design](issues/02-ble-protocol-and-bms-driver.md)**: Validated little-endian 66-byte packet parsing (`<I`, `<16H`, `<i`, `<h`, `<h`, `<H`, `<H`) and BleakClient single-poll connect-notify-write-disconnect cycle via executable prototype.
