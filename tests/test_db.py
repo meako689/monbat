@@ -1,9 +1,11 @@
 import asyncio
 import sqlite3
+
+import pytest
 from contextlib import closing
 from pathlib import Path
 
-from monbat.bms import BatteryTelemetry
+from monbat.bms import BatteryTelemetry, CellReading
 from monbat.db import TelemetryRepository
 
 
@@ -23,7 +25,11 @@ def _telemetry(
         capacity_ah=100.0,
         cell_temp_c=24,
         bms_temp_c=23,
-        cell_voltages_v=cell_voltages_v,
+        cell_readings=tuple(CellReading(slot, voltage) for slot, voltage in enumerate(cell_voltages_v, 1)),
+        temperature_slots_c=(24, 23, 0, 0, 0),
+        balancing_mask=0,
+        problem_flags=4,
+        raw_response=bytes.fromhex("000065019355aa007c3300000c340000030d030d030d030d00000000000000000000000000000000000000000000000000000000170018000000000000001027102700000000000000000000000000000000000000000000000063006400000000000000000000008b"),
         reported_soc_percent=37.0,
         soc_source="bms",
         soh_percent=98.0,
@@ -144,3 +150,29 @@ def test_nullable_health_and_unknown_bits_round_trip(tmp_path: Path) -> None:
     asyncio.run(repo.save_telemetry("bat-1", telemetry))
     assert asyncio.run(repo.get_latest_telemetry("bat-1")) == telemetry
     assert asyncio.run(repo.get_history("bat-1", 0)) == [telemetry]
+
+
+@pytest.mark.parametrize("fixture_name", ["REAL_STATUS", "A1_STATUS"])
+def test_parsed_response_survives_persistence(tmp_path: Path, fixture_name: str) -> None:
+    from monbat.bms import parse_bms_payload
+    from test_bms import A1_STATUS, REAL_STATUS
+
+    frame = REAL_STATUS if fixture_name == "REAL_STATUS" else A1_STATUS
+    telemetry = parse_bms_payload(b"stale" + frame + b"trailing", timestamp=123)
+    repo = _repository(tmp_path)
+    asyncio.run(repo.init_db())
+    asyncio.run(repo.save_telemetry("bat-1", telemetry))
+    asyncio.run(repo.save_telemetry("bat-1", telemetry))
+    assert asyncio.run(repo.get_latest_telemetry("bat-1")) == telemetry
+    assert asyncio.run(repo.get_history("bat-1", 0)) == [telemetry, telemetry]
+
+
+def test_incompatible_schema_is_preserved(tmp_path: Path) -> None:
+    path = tmp_path / "old.sqlite3"
+    with sqlite3.connect(path) as connection:
+        connection.execute("CREATE TABLE telemetry (id INTEGER PRIMARY KEY, cell_voltages_json TEXT)")
+        connection.execute("INSERT INTO telemetry VALUES (1, '[3.3]')")
+    original = path.read_bytes()
+    with pytest.raises(ValueError, match="new database path"):
+        asyncio.run(TelemetryRepository(str(path)).init_db())
+    assert path.read_bytes() == original

@@ -1,7 +1,7 @@
 # Decode useful protocol fields and preserve cell identity
 
 Type: task
-Status: open
+Status: resolved
 Triage: ready-for-agent
 
 ## Implementation handoff
@@ -59,3 +59,28 @@ identity, useful values, and byte-for-byte recovery of the full response; synthe
 
 - 2026-10-17: User revised the storage decision: preserve full validated BLE
   samples alongside useful typed fields. This supersedes the earlier exclusion.
+
+
+## Answer
+
+Implemented on 2026-11-01. Frozen CellReading values preserve populated 1-based
+slots; compatibility voltages derive from them. Telemetry retains five signed
+temperatures, the complete u64 problem region, the u32 balancing mask and
+reference-derived candidate slots, explicit unknown upper/balancing bits, and
+immutable bytes of the exact validated declared response. Existing low-word
+labels, state/SOC/SOH policies, minimum length, query, and ATT mode remain intact.
+
+Required caller adaptations add fresh-schema field/BLOB persistence and JSON
+serialization with u64 hex, history response hex, and no response in latest/SSE.
+Old schemas fail before WAL/DDL changes. Ticket 22 remains open for complete
+repository boundary validation and storage/API edge-case acceptance. Ticket 23
+retains Dashboard presentation. No deployment or live hardware validation.
+
+Validation: 45 offline parser tests pass, including attributed B4/A1 fixtures,
+sparse slots, all five signed temperatures, u64 bit 63, unknown low/upper bits,
+balancing slots 1/3/16 and bit 31, 101/105-byte response retention, malformed
+frames, and unchanged request/ATT mode. Repository tests preserve both captures
+through repeated writes and preserve incompatible database bytes. Full offline
+suite: 143 passed, 2 live tests deselected. `ty check` passes for all three changed
+production modules; `git diff --check` and credential/local-identifier scan pass.
+Standards and specification reviews have no remaining findings.

@@ -43,9 +43,24 @@ source. Unavailable SOC/SOH are retained as null in their reported fields.
 Active protections cover overcharge, over-discharge, charge/discharge
 overcurrent, high/low temperature, and short circuit. Unknown protection bits
 and BMS states remain explicit. Reading freshness and communication failures
-are separate from BMS-reported protection state. No separate balancing-state
-field is decoded by Monbat today. External references describe balancing and
-additional raw regions; their preservation and qualified presentation are planned.
+are separate from BMS-reported protection state. Telemetry now retains populated cells as immutable `CellReading(slot, voltage_v)`
+values with original 1-based slots. The compact `cell_voltages_v` compatibility
+array is derived from these readings; zero-voltage slots are omitted.
+
+All five signed temperature slots are retained, including 0 °C. Slots 1/2
+remain the named cell/BMS temperatures; additional sensor identities are unknown.
+The complete u64 problem region is preserved, with existing low-word protection
+labels and an explicitly unknown upper word. The u32 balancing mask is preserved;
+bits 0–15 derive candidate cell slots 1–16, even without voltage readings.
+Bits 16–31 remain unknown. These candidates follow L/E's reference interpretation
+and do not establish physical balancing on the user's Batteries.
+
+`raw_response` holds immutable bytes of the validated declared frame, including
+unknown regions and checksum, excluding stale prefixes and trailing bytes.
+The repository persists it with each successful Telemetry row. Latest/SSE omit
+these bytes; history returns lowercase `raw_response_hex`. Problem flags use
+16-digit lowercase hex in JSON to preserve u64 precision. Ticket 22 retains
+full storage/API boundary validation; ticket 23 retains Dashboard presentation.
 
 ## Reference and validation
 

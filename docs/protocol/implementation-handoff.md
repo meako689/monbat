@@ -1,8 +1,8 @@
 # Protocol implementation handoff: tickets 21–23
 
 The user confirmed this scope on 2026-10-17, then revised it to preserve
-complete BLE responses. This document records the final contract. No driver
-changes have been implemented yet. Read the root repository guidance, claim
+complete BLE responses. This document records the final contract. Ticket 21 implemented the driver and required caller adaptations on 2026-11-01;
+tickets 22–23 retain full storage/API validation and Dashboard acceptance. Read the root repository guidance, claim
 each ticket before work, and record results/validation when resolving it.
 
 ## Read first and authority

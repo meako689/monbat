@@ -20,7 +20,7 @@ import pytest
 from bleak import BleakScanner
 from bleak.exc import BleakError
 
-from monbat.bms import BatteryTelemetry, MIN_PAYLOAD_LEN, PROTECTION_FLAGS, expected_response_length, parse_bms_payload, poll_battery
+from monbat.bms import BatteryTelemetry, CellReading, MIN_PAYLOAD_LEN, PROTECTION_FLAGS, expected_response_length, parse_bms_payload, poll_battery
 
 # ---------------------------------------------------------------------------
 # Helpers (only used by tests — not exported by production bms.py)
@@ -219,6 +219,8 @@ def test_captured_status_and_prefix() -> None:
         assert t.cycle_count == 0
         assert t.bms_state == "idle"
         assert t.active_protections == ()
+        assert t.raw_response == REAL_STATUS
+        assert t.temperature_slots_c == (23, 24, 0, 0, 0)
         assert expected_response_length(prefix + REAL_STATUS) == len(prefix) + 105
 
 
@@ -299,6 +301,7 @@ def test_poll_reassembles_and_disconnects(monkeypatch: pytest.MonkeyPatch, scena
 
         async def write_gatt_char(self, uuid: str, request: bytes, response: bool) -> None:
             assert request == bytes.fromhex("000004011355aa17")
+            assert response is False
             if scenario == "write-failure":
                 raise OSError("write failed")
             frame = bytearray(REAL_STATUS)
@@ -325,3 +328,81 @@ def test_poll_reassembles_and_disconnects(monkeypatch: pytest.MonkeyPatch, scena
             asyncio.run(poll_battery("test", timeout_sec=0.01))
     assert calls[:2] == ["connect", "notify"]
     assert calls[-1] == "disconnect"
+
+
+def test_sparse_cell_readings_preserve_slot_identity() -> None:
+    telemetry = parse_bms_payload(_build_payload(cells_v=(3.300, 0, 3.350)))
+    assert telemetry.cell_readings == (CellReading(1, 3.300), CellReading(3, 3.350))
+    assert telemetry.cell_voltages_v == (3.300, 3.350)
+    with pytest.raises((AttributeError, TypeError)):
+        telemetry.cell_readings[0].slot = 2  # type: ignore[misc]
+
+
+def test_all_temperature_slots_are_signed_and_keep_zero() -> None:
+    frame = bytearray(_build_payload())
+    struct.pack_into("<5h", frame, 52, -24, 0, -32768, 0, 32767)
+    frame[-1] = sum(frame[:-1]) & 255
+    telemetry = parse_bms_payload(bytes(frame))
+    assert telemetry.temperature_slots_c == (-24, 0, -32768, 0, 32767)
+    assert telemetry.cell_temp_c == -24
+    assert telemetry.bms_temp_c == 0
+
+
+def test_complete_problem_region_and_balancing_candidates() -> None:
+    frame = bytearray(_build_payload(cells_v=(3.300, 0, 3.350)))
+    struct.pack_into("<Q", frame, 76, 0x8000000180000004)
+    struct.pack_into("<I", frame, 84, 0x80008005)
+    frame[-1] = sum(frame[:-1]) & 255
+    telemetry = parse_bms_payload(bytes(frame))
+    assert telemetry.problem_flags == 0x8000000180000004
+    assert telemetry.protection_flags == 0x80000004
+    assert telemetry.active_protections == ("Overcharge", "Unknown protection bits: 0x80000000")
+    assert telemetry.unknown_problem_upper_word == 0x80000001
+    assert telemetry.balancing_mask == 0x80008005
+    assert telemetry.balancing_cell_slots == (1, 3, 16)
+    assert telemetry.unknown_balancing_bits == 0x80000000
+
+
+@pytest.mark.parametrize("length", [101, 105])
+def test_raw_response_keeps_only_validated_declared_frame(length: int) -> None:
+    frame = bytearray(REAL_STATUS[:length])
+    frame[2] = length - 4
+    frame[-1] = sum(frame[:-1]) & 255
+    expected = bytes(frame)
+    telemetry = parse_bms_payload(b"stale-prefix" + expected + b"trailing-data")
+    assert telemetry.raw_response == expected
+    assert isinstance(telemetry.raw_response, bytes)
+    assert telemetry.cycle_count == 0
+
+
+# aiobmsble tests/bms/test_redodo_bms.py, MockRedodoBleakClient._RESP,
+# commit 2a78c0e0ad9ce018236bd39622bf77c21b20d26f (A1 reference fixture).
+A1_STATUS = bytes.fromhex(
+    "000065019355aa0046660000bc670000f50cf70cfc0cfb0cf80cf20cfa0cf50c0000000000000000000000000000000065faffff17001600feff00000000e91a0429000000000000000000000000000000000000000000000000410064000000030000005f010000a2"
+)
+
+
+def test_aiobmsble_reference_status() -> None:
+    telemetry = parse_bms_payload(A1_STATUS)
+    assert telemetry.raw_response == A1_STATUS
+    assert telemetry.cell_voltages_v == (3.317, 3.319, 3.324, 3.323, 3.320, 3.314, 3.322, 3.317)
+    assert tuple(cell.slot for cell in telemetry.cell_readings) == (1, 2, 3, 4, 5, 6, 7, 8)
+    assert telemetry.voltage_v == 26.556
+    assert telemetry.current_a == -1.435
+    assert telemetry.temperature_slots_c == (23, 22, -2, 0, 0)
+    assert telemetry.remaining_ah == 68.89
+    assert telemetry.capacity_ah == 105
+    assert telemetry.soc_percent == 65
+    assert telemetry.soh_percent == 100
+    assert telemetry.cycle_count == 3
+    assert telemetry.problem_flags == telemetry.balancing_mask == 0
+
+
+def test_upper_problem_word_is_unknown_without_named_protections() -> None:
+    frame = bytearray(REAL_STATUS)
+    struct.pack_into("<Q", frame, 76, 0x8000000000000000)
+    frame[-1] = sum(frame[:-1]) & 255
+    telemetry = parse_bms_payload(bytes(frame))
+    assert telemetry.protection_flags == 0
+    assert telemetry.active_protections == ()
+    assert telemetry.unknown_problem_upper_word == 0x80000000

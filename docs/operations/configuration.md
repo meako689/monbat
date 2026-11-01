@@ -55,10 +55,17 @@ credentials and personal identifiers in ignored local files such as
 validation artifacts. Addresses are opaque host-specific Bleak identifiers.
 Discovery asks before overwriting an existing configuration.
 
-## Fresh database for the health Telemetry schema
+## Fresh database for the protocol Telemetry schema
 
 Previous Telemetry databases are not migrated. Stop the old service and set
 `sqlite_path` to a new file before running this schema. Keep your existing
 polling, server, and Battery settings. The service creates the new SQLite
-schema in WAL mode and preserves the old file. An old schema cannot be used
-with the updated service.
+schema in WAL mode and preserves the old file. Startup rejects an incompatible Telemetry schema with instructions to select
+a new `sqlite_path`, before changing WAL or schema. Existing files remain intact.
+
+The fresh schema stores original cell slots as `cell_readings_json`, five
+temperatures as `temperature_slots_json`, a u32 `balancing_mask`, the u64 problem
+region as 16-digit `problem_flags_hex` TEXT, and each complete validated response
+as a `raw_response` BLOB. Compatibility voltage arrays and balancing candidates
+are derived on read. Every successful reading is stored, including repeated
+identical responses; polling cadence is unchanged.

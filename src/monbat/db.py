@@ -7,7 +7,7 @@ import json
 import sqlite3
 from contextlib import closing
 
-from monbat.bms import BatteryTelemetry, BmsState, SocSource
+from monbat.bms import BatteryTelemetry, BmsState, CellReading, SocSource
 
 _CREATE_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS telemetry (
@@ -22,7 +22,11 @@ CREATE TABLE IF NOT EXISTS telemetry (
     capacity_ah REAL NOT NULL,
     cell_temp_c INTEGER NOT NULL,
     bms_temp_c INTEGER NOT NULL,
-    cell_voltages_json TEXT NOT NULL,
+    cell_readings_json TEXT NOT NULL,
+    temperature_slots_json TEXT NOT NULL,
+    balancing_mask INTEGER NOT NULL,
+    problem_flags_hex TEXT NOT NULL,
+    raw_response BLOB NOT NULL,
     reported_soc_percent REAL,
     soc_source TEXT NOT NULL,
     soh_percent REAL,
@@ -81,6 +85,11 @@ class TelemetryRepository:
 
     def _init_db_sync(self) -> None:
         with closing(self._connect()) as connection:
+            existing = connection.execute("PRAGMA table_info(telemetry)").fetchall()
+            if existing:
+                expected = {line.strip().split()[0] for line in _CREATE_TABLE_SQL.splitlines()[2:-1]}
+                if {row["name"] for row in existing} != expected:
+                    raise ValueError("Incompatible telemetry schema; select a new database path (sqlite_path)")
             connection.execute("PRAGMA journal_mode = WAL")
             connection.execute(_CREATE_TABLE_SQL)
             connection.execute(_CREATE_INDEX_SQL)
@@ -89,7 +98,10 @@ class TelemetryRepository:
     def _save_telemetry_sync(
         self, battery_id: str, telemetry: BatteryTelemetry
     ) -> None:
-        cell_voltages_json = json.dumps(list(telemetry.cell_voltages_v))
+        cell_readings_json = json.dumps([
+            {"slot": cell.slot, "voltage_v": cell.voltage_v}
+            for cell in telemetry.cell_readings
+        ])
         with closing(self._connect()) as connection:
             connection.execute(
                 """
@@ -104,10 +116,11 @@ class TelemetryRepository:
                     capacity_ah,
                     cell_temp_c,
                     bms_temp_c,
-                    cell_voltages_json, reported_soc_percent, soc_source,
+                    cell_readings_json, temperature_slots_json, balancing_mask,
+                    problem_flags_hex, raw_response, reported_soc_percent, soc_source,
                     soh_percent, cycle_count, bms_state_raw, bms_state,
                     protection_flags, active_protections_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     battery_id,
@@ -120,7 +133,11 @@ class TelemetryRepository:
                     telemetry.capacity_ah,
                     telemetry.cell_temp_c,
                     telemetry.bms_temp_c,
-                    cell_voltages_json,
+                    cell_readings_json,
+                    json.dumps(telemetry.temperature_slots_c),
+                    telemetry.balancing_mask,
+                    f"{telemetry.problem_flags:016x}",
+                    telemetry.raw_response,
                     telemetry.reported_soc_percent,
                     telemetry.soc_source,
                     telemetry.soh_percent,
@@ -141,7 +158,8 @@ class TelemetryRepository:
                 """
                 SELECT timestamp, voltage_v, current_a, power_w, soc_percent,
                        remaining_ah, capacity_ah, cell_temp_c, bms_temp_c,
-                       cell_voltages_json, reported_soc_percent, soc_source,
+                       cell_readings_json, temperature_slots_json, balancing_mask,
+                       problem_flags_hex, raw_response, reported_soc_percent, soc_source,
                        soh_percent, cycle_count, bms_state_raw, bms_state,
                        protection_flags, active_protections_json
                 FROM telemetry
@@ -164,7 +182,8 @@ class TelemetryRepository:
                 """
                 SELECT timestamp, voltage_v, current_a, power_w, soc_percent,
                        remaining_ah, capacity_ah, cell_temp_c, bms_temp_c,
-                       cell_voltages_json, reported_soc_percent, soc_source,
+                       cell_readings_json, temperature_slots_json, balancing_mask,
+                       problem_flags_hex, raw_response, reported_soc_percent, soc_source,
                        soh_percent, cycle_count, bms_state_raw, bms_state,
                        protection_flags, active_protections_json
                 FROM telemetry
@@ -188,7 +207,11 @@ def _telemetry_from_row(row: sqlite3.Row) -> BatteryTelemetry:
         capacity_ah=_as_float(row["capacity_ah"], "capacity_ah"),
         cell_temp_c=_as_int(row["cell_temp_c"], "cell_temp_c"),
         bms_temp_c=_as_int(row["bms_temp_c"], "bms_temp_c"),
-        cell_voltages_v=_decode_cell_voltages(row["cell_voltages_json"]),
+        cell_readings=_decode_cell_readings(row["cell_readings_json"]),
+        temperature_slots_c=_decode_temperature_slots(row["temperature_slots_json"]),
+        balancing_mask=_as_int(row["balancing_mask"], "balancing_mask"),
+        problem_flags=int(row["problem_flags_hex"], 16),
+        raw_response=bytes(row["raw_response"]),
         reported_soc_percent=_optional_float(row["reported_soc_percent"], "reported_soc_percent"),
         soc_source=_soc_source(row["soc_source"]),
         soh_percent=_optional_float(row["soh_percent"], "soh_percent"),
@@ -212,21 +235,34 @@ def _as_int(value: object, column: str) -> int:
     return value
 
 
-def _decode_cell_voltages(value: object) -> tuple[float, ...]:
+def _decode_cell_readings(value: object) -> tuple[CellReading, ...]:
     if not isinstance(value, str):
-        raise ValueError("Invalid cell_voltages_json value in telemetry database")
-
+        raise ValueError("Invalid cell_readings_json value in telemetry database")
     decoded: object = json.loads(value)
     if not isinstance(decoded, list):
-        raise ValueError("Cell voltages must be stored as a JSON array")
+        raise ValueError("Cell readings must be stored as a JSON array")
+    cells: list[CellReading] = []
+    for cell in decoded:
+        if not isinstance(cell, dict):
+            raise ValueError("Cell readings must contain slot/voltage objects")
+        slot = _as_int(cell.get("slot"), "cell slot")
+        voltage = _as_float(cell.get("voltage_v"), "cell voltage")
+        if not 1 <= slot <= 16 or (cells and slot <= cells[-1].slot) or voltage <= 0:
+            raise ValueError("Invalid cell slot ordering or voltage")
+        cells.append(CellReading(slot, voltage))
+    return tuple(cells)
 
-    cell_voltages: list[float] = []
-    for voltage in decoded:
-        if isinstance(voltage, bool) or not isinstance(voltage, (int, float)):
-            raise ValueError("Cell voltages must contain only numeric values")
-        cell_voltages.append(float(voltage))
 
-    return tuple(cell_voltages)
+def _decode_temperature_slots(value: object) -> tuple[int, int, int, int, int]:
+    if not isinstance(value, str):
+        raise ValueError("Invalid temperature_slots_json value in telemetry database")
+    decoded: object = json.loads(value)
+    if not isinstance(decoded, list) or len(decoded) != 5:
+        raise ValueError("Temperatures must contain five slots")
+    slots = [_as_int(item, "temperature slot") for item in decoded]
+    if any(not -32768 <= item <= 32767 for item in slots):
+        raise ValueError("Temperature slot outside signed i16 range")
+    return slots[0], slots[1], slots[2], slots[3], slots[4]
 
 
 def _optional_float(value: object, column: str) -> float | None:

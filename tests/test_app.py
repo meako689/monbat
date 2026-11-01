@@ -22,7 +22,7 @@ from monbat.app import (
     _load_config,
     build_app,
 )
-from monbat.bms import BatteryTelemetry
+from monbat.bms import BatteryTelemetry, CellReading
 from monbat.db import TelemetryRepository
 
 
@@ -94,7 +94,11 @@ def _make_telemetry(
         capacity_ah=100.0,
         cell_temp_c=24,
         bms_temp_c=25,
-        cell_voltages_v=cell_voltages_v,
+        cell_readings=tuple(CellReading(slot, voltage) for slot, voltage in enumerate(cell_voltages_v, 1)),
+        temperature_slots_c=(24, 25, 0, 0, 0),
+        balancing_mask=0,
+        problem_flags=4,
+        raw_response=bytes.fromhex("000065019355aa007c3300000c340000030d030d030d030d00000000000000000000000000000000000000000000000000000000170018000000000000001027102700000000000000000000000000000000000000000000000063006400000000000000000000008b"),
         reported_soc_percent=37.0,
         soc_source="bms",
         soh_percent=98.0,

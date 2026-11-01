@@ -8,7 +8,7 @@ import logging
 import math
 import time
 import tomllib
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -238,6 +238,37 @@ def _status_for(
     return "idle"
 
 
+def _telemetry_json(telemetry: BatteryTelemetry, *, history: bool = False) -> dict[str, object]:
+    result: dict[str, object] = {
+        "timestamp": telemetry.timestamp,
+        "voltage_v": telemetry.voltage_v,
+        "current_a": telemetry.current_a,
+        "power_w": telemetry.power_w,
+        "soc_percent": telemetry.soc_percent,
+        "remaining_ah": telemetry.remaining_ah,
+        "capacity_ah": telemetry.capacity_ah,
+        "cell_temp_c": telemetry.cell_temp_c,
+        "bms_temp_c": telemetry.bms_temp_c,
+        "cell_readings": [asdict(cell) for cell in telemetry.cell_readings],
+        "cell_voltages_v": telemetry.cell_voltages_v,
+        "temperature_slots_c": telemetry.temperature_slots_c,
+        "reported_soc_percent": telemetry.reported_soc_percent,
+        "soc_source": telemetry.soc_source,
+        "soh_percent": telemetry.soh_percent,
+        "cycle_count": telemetry.cycle_count,
+        "bms_state_raw": telemetry.bms_state_raw,
+        "bms_state": telemetry.bms_state,
+        "protection_flags": telemetry.protection_flags,
+        "active_protections": telemetry.active_protections,
+        "balancing_mask": telemetry.balancing_mask,
+        "balancing_cell_slots": telemetry.balancing_cell_slots,
+        "problem_flags": f"{telemetry.problem_flags:016x}",
+    }
+    if history:
+        result["raw_response_hex"] = telemetry.raw_response.hex()
+    return result
+
+
 def _cell_delta_mv(telemetry: BatteryTelemetry | None) -> float | None:
     if telemetry is None or not telemetry.cell_voltages_v:
         return None
@@ -439,7 +470,7 @@ def build_app(
     poller: Poller | None = None
 
     @asynccontextmanager
-    async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
         nonlocal poller
         await repo.init_db()
         poller_task: asyncio.Task[None] | None = None
@@ -482,7 +513,13 @@ def build_app(
                 ),
                 cell_delta_mv=_cell_delta_mv(telemetry),
             )
-            result[battery.id] = asdict(view)
+            result[battery.id] = {
+                "name": view.name,
+                "address": view.address,
+                "telemetry": _telemetry_json(telemetry) if telemetry is not None else None,
+                "status": view.status,
+                "cell_delta_mv": view.cell_delta_mv,
+            }
         return result
 
     @app.get("/api/summary")
@@ -535,7 +572,7 @@ def build_app(
                     "name": battery.name,
                     "address": battery.address,
                 }
-                row.update(asdict(telemetry))
+                row.update(_telemetry_json(telemetry, history=True))
                 rows.append((telemetry.timestamp, battery.id, row))
 
         rows.sort(key=lambda row: (row[0], row[1]))

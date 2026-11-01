@@ -54,3 +54,12 @@ and unknown bytes; prefixes/trailing unrelated bytes must not be stored.
 
 - 2026-10-17: User revised the decision to preserve full BLE samples as BLOBs
   alongside useful fields. Fresh-database policy remains unchanged.
+
+
+- 2026-11-01: Ticket 21 resolved. Its required caller adaptations already add
+  fresh-schema storage for typed fields and response BLOBs, latest/history JSON
+  serialization, and old-column mismatch rejection. This ticket remains open:
+  complete repository range/hex/schema validation, cross-field consistency, and
+  all storage/API/SSE edge-case acceptance still need implementation/verification.
+  Attributed B4/A1 repository round trips and old database byte preservation
+  are covered; these do not replace this ticket's full acceptance criteria.

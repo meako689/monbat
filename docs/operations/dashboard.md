@@ -139,6 +139,13 @@ request failure also hides the totals.
 | `GET /api/summary` | Availability, capacity-weighted SOC, signed net watts, and unavailable reason |
 | `GET /api/history?hours=24` | Chronological Telemetry rows; hours must be positive |
 
+Telemetry JSON includes `cell_readings` objects with original `slot` and
+`voltage_v`, all five `temperature_slots_c`, `balancing_mask`, derived
+`balancing_cell_slots`, and 16-digit lowercase `problem_flags` hex.
+The existing compact `cell_voltages_v` array remains available. Latest/SSE
+omit full responses; history adds lowercase `raw_response_hex` without a prefix.
+Dashboard presentation of the new protocol details is pending ticket 23.
+
 ## Browser regression tests
 
 Install Chromium once after syncing development dependencies:

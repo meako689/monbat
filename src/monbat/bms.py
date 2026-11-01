@@ -73,6 +73,12 @@ def _validated_frame(data: bytes) -> bytes:
 
 
 @dataclass(frozen=True, slots=True)
+class CellReading:
+    slot: int
+    voltage_v: float
+
+
+@dataclass(frozen=True, slots=True)
 class BatteryTelemetry:
     timestamp: float
     voltage_v: float
@@ -83,15 +89,37 @@ class BatteryTelemetry:
     capacity_ah: float
     cell_temp_c: int
     bms_temp_c: int
-    cell_voltages_v: tuple[float, ...]
+    cell_readings: tuple[CellReading, ...]
+    temperature_slots_c: tuple[int, int, int, int, int]
     reported_soc_percent: float | None
     soc_source: SocSource
     soh_percent: float | None
     cycle_count: int
     bms_state_raw: int
     bms_state: BmsState
+    raw_response: bytes
+    problem_flags: int
+    balancing_mask: int
     protection_flags: int
     active_protections: tuple[str, ...]
+
+
+    @property
+    def cell_voltages_v(self) -> tuple[float, ...]:
+        return tuple(cell.voltage_v for cell in self.cell_readings)
+
+    @property
+    def balancing_cell_slots(self) -> tuple[int, ...]:
+        """Reference-derived candidates; physical balancing is unverified."""
+        return tuple(slot for slot in range(1, 17) if self.balancing_mask & (1 << (slot - 1)))
+
+    @property
+    def unknown_balancing_bits(self) -> int:
+        return self.balancing_mask & 0xffff0000
+
+    @property
+    def unknown_problem_upper_word(self) -> int:
+        return self.problem_flags >> 32
 
 
 def parse_bms_payload(data: bytes, timestamp: float | None = None) -> BatteryTelemetry:
@@ -102,13 +130,15 @@ def parse_bms_payload(data: bytes, timestamp: float | None = None) -> BatteryTel
     voltage_v = round(voltage_mv / 1000.0, 3)
 
     raw_cells: tuple[int, ...] = struct.unpack_from("<16H", data, 16)
-    cell_voltages_v = tuple(round(c / 1000.0, 3) for c in raw_cells if c > 0)
+    cell_readings = tuple(
+        CellReading(slot, round(value / 1000.0, 3))
+        for slot, value in enumerate(raw_cells, 1) if value > 0
+    )
 
     current_ma: int = struct.unpack_from("<i", data, 48)[0]
     current_a = round(current_ma / 1000.0, 3)
 
-    cell_temp_c: int = struct.unpack_from("<h", data, 52)[0]
-    bms_temp_c: int = struct.unpack_from("<h", data, 54)[0]
+    temperatures: tuple[int, int, int, int, int] = struct.unpack_from("<5h", data, 52)
 
     remaining_raw: int = struct.unpack_from("<H", data, 62)[0]
     remaining_ah = round(remaining_raw / 100.0, 2)
@@ -130,7 +160,8 @@ def parse_bms_payload(data: bytes, timestamp: float | None = None) -> BatteryTel
     states: dict[int, BmsState] = {
         0: "idle", 1: "charging", 2: "discharging", 4: "disabled",
     }
-    flags = struct.unpack_from("<I", data, 76)[0]
+    problem_flags: int = struct.unpack_from("<Q", data, 76)[0]
+    flags = problem_flags & 0xffffffff
     protections = [label for mask, label in PROTECTION_FLAGS if flags & mask]
     known_mask = sum(mask for mask, _ in PROTECTION_FLAGS)
     unknown_flags = flags & ~known_mask
@@ -145,15 +176,19 @@ def parse_bms_payload(data: bytes, timestamp: float | None = None) -> BatteryTel
         soc_percent=reported_soc if reported_soc is not None else soc_percent,
         remaining_ah=remaining_ah,
         capacity_ah=capacity_ah,
-        cell_temp_c=cell_temp_c,
-        bms_temp_c=bms_temp_c,
-        cell_voltages_v=cell_voltages_v,
+        cell_temp_c=temperatures[0],
+        bms_temp_c=temperatures[1],
+        temperature_slots_c=temperatures,
+        cell_readings=cell_readings,
         reported_soc_percent=reported_soc,
         soc_source="bms" if reported_soc is not None else "capacity",
         soh_percent=float(soh_raw) if soh_raw <= 100 else None,
         cycle_count=struct.unpack_from("<I", data, 96)[0],
         bms_state_raw=state_raw,
         bms_state=states.get(state_raw, "unknown"),
+        raw_response=data,
+        problem_flags=problem_flags,
+        balancing_mask=struct.unpack_from("<I", data, 84)[0],
         protection_flags=flags,
         active_protections=tuple(protections),
     )
