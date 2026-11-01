@@ -29,3 +29,14 @@ protections, escaping, and sparse-cell identity.
 
 Validation: 191 offline tests passed, 2 live tests deselected. Changed app module
 typechecking and `git diff --check` passed. Deployment validation follows.
+
+
+## Deployment attempt
+
+Published candidate `e692089` on 2026-11-01. Plan detected the existing service
+on `3d40b08` and compatible unchanged configuration/database. Apply ID
+`ticket32-20261101` sent graceful SIGINT, then refused replacement after the
+60-second shutdown deadline. Logs report waiting for open connections to close.
+Source remains `3d40b08`; candidate was not started. User was asked to close
+Dashboard tabs. Retry with a new deployment ID after graceful shutdown completes;
+use `--start-stopped` only if process exit is confirmed. Do not force termination.
