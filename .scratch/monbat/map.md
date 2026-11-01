@@ -17,6 +17,9 @@ Technical architecture and implementation specification for `monbat`: an offgrid
   Removed ticket 23's disclosure/notice; original cell labels and ordinary
   readings remain. Storage/API fields retained. 191 offline tests and changed
   app typechecking pass. Supersedes ticket 23's presentation requirements.
+  Deployed `e692089` after tabs closed: both Batteries passed fresh readings,
+  API/database checks, and three visible browser updates with no page errors.
+  [Evidence](validation/32-20261101-deployment.md).
 
 - **[31 Detect default-CLI services during deployment](issues/31-detect-default-cli-service.md)**:
   Resolved on 2026-11-01 after ticket 23 cutover. Deployment now recognizes

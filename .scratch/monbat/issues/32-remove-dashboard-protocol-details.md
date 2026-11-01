@@ -40,3 +40,16 @@ on `3d40b08` and compatible unchanged configuration/database. Apply ID
 Source remains `3d40b08`; candidate was not started. User was asked to close
 Dashboard tabs. Retry with a new deployment ID after graceful shutdown completes;
 use `--start-stopped` only if process exit is confirmed. Do not force termination.
+
+
+## Successful deployment
+
+After the user closed Dashboard tabs, the old service exited gracefully.
+Retry `ticket32-20261101-retry1` deployed exact `e692089` with the existing
+configuration/database. Both Batteries passed fresh-reading checks. Browser
+validation confirmed the removed details are absent, three visible updates
+per Battery, and no page errors. API fields and SQLite integrity passed.
+[Deployment evidence](../validation/32-20261101-deployment.md).
+
+Post-browser validation confirmed both retained clients released and storage
+remained unchanged after the grace period, with no service warnings/errors.
