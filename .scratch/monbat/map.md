@@ -16,8 +16,10 @@ Technical architecture and implementation specification for `monbat`: an offgrid
   Resolved locally on 2026-11-01. HTTP/SSE shutdown allows five seconds, then
   cancels requests before application cleanup. Deployment process/port guards
   remain intact. Real open-SSE shutdown regression and 192 offline tests pass;
-  app typechecking and both reviews pass. Takes effect on next service restart;
-  no live deployment performed.
+  app typechecking and both reviews pass. Deployed `fe26b33`; a live same-version
+  restart with SSE open and both persistent BLE clients retained completed
+  shutdown in nine seconds, disconnected both clients, and resumed fresh
+  readings/browser updates. [Evidence](validation/33-20261101-deployment.md).
 
 - **[32 Remove Dashboard protocol details](issues/32-remove-dashboard-protocol-details.md)**:
   Resolved locally on 2026-11-01 at the user's request after live review.

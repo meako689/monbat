@@ -40,3 +40,16 @@ Committed locally for the next restart; no deployment or live restart performed.
 The current service still runs e692089 without the new HTTP timeout. Existing
 open connections can block the first upgrade; subsequent restarts use the new
 policy. No request to close user tabs was made during this change.
+
+
+## Deployment and persistent BLE validation
+
+Deployed `fe26b33` on 2026-11-01, preserving config/database. A second
+same-revision rollout held a real Dashboard/SSE connection open while both
+Batteries had retained BLE clients. HTTP cancellation reached normal lifespan
+shutdown, both BLE clients disconnected, and shutdown completed in nine
+seconds including the five-second request grace period. Restart produced fresh
+readings from both Batteries and the same browser reconnected without errors.
+No forced process termination was used. This adds healthy live persistent-BLE
+coverage to the existing offline cancellation tests.
+[Evidence](../validation/33-20261101-deployment.md).
