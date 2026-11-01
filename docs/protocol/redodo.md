@@ -14,10 +14,13 @@ Dashboard collection it can retain connections and notification subscriptions;
 background passes disconnect after reading. Each request collects and validates
 a separate complete response.
 
-The Poller retains discovered `BLEDevice` objects for active and background
-reconnects until service restart. It cleans up failed clients before replacement,
-then connects, subscribes, and collects a fresh response. Failed direct attempts
-defer shared rediscovery until after backoff; scan misses keep the cache.
+The Poller uses one shared scan per background pass and reuses its fresh
+`BLEDevice` results for all eligible new connections. Background objects are
+discarded after client release. Active Dashboard collection reuses healthy
+connections and recent discovery candidates, including during the grace period.
+It cleans up failed clients before replacement, then connects, subscribes, and
+collects a fresh response. Failed active cached attempts defer shared rediscovery
+until after backoff; active scan misses keep recent candidates.
 On Linux a missing BlueZ Device1 object is a recoverable connection failure,
 not evidence of a surviving radio link. See [BLE recovery](../operations/dashboard.md#ble-recovery)
 for retry ordering and bounded cleanup/shutdown.

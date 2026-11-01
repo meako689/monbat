@@ -87,6 +87,27 @@ scope. Creating this ticket does not start a sleep/resume experiment.
 
 ## Comments
 
+- 2026-11-01: User approved shared background discovery and Dashboard connection
+  reuse. [Ticket 28](28-shared-background-discovery.md) is implemented and resolved
+  locally: one fresh scan per background pass, reuse for newly eligible recovery,
+  and discovery-candidate release at the background boundary. All 133 offline
+  tests and both original diagnostic cases pass. The unchanged replay fails
+  against the pristine pre-change Poller. No deployment or physical validation
+  performed; ticket 27 remains claimed for the Linux sleep/resume retest.
+
+- 2026-11-01: Read-only SSH diagnosis of `/tmp/monbat-log-1nov.log` confirms
+  prompt background retries are deployed, but all 38 post-startup scheduled
+  background passes first fail on missing cached BlueZ objects. Median retry
+  completion is 24s for bat-1 and 39s for bat-2. Deterministic replays show
+  avoidable cached-attempt/backoff overhead and a second shared-discovery defect:
+  millisecond retry-deadline drift can split two Batteries into separate scans.
+  Discovery-first and deadline-batching causal probes pass. Recommend shared
+  discovery after long Linux idle gaps and batched recovery while preserving
+  current cleanup safety. [Evidence, limitations, and runnable diagnostics](../validation/27-20261101-cache-diagnosis/report.md).
+  Existing recovery/driver checks: 80 passed, two live tests deselected. No
+  production change, deployment, adapter action, or physical retest performed;
+  status remains claimed.
+
 - 2026-10-31: Published the [recovery specification](../../monbat-recovery/spec.md)
   using to-spec, synthesizing both October 30 investigations and the earlier
   physical evidence. Triage is ready-for-agent; status remains claimed.

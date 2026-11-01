@@ -140,6 +140,15 @@ Existing configuration retained; rediscovery will save tested concurrency 2 here
 
 ## Connection recovery — 2026-10-18
 
+- **[28 Use one shared scan for background collection](issues/28-shared-background-discovery.md)**:
+  Resolved locally on 2026-11-01. Background passes and retries share fresh
+  discovery, including failed Batteries becoming eligible during the scan.
+  Active Dashboard/grace connections and recent reconnect candidates remain
+  reusable; disconnected candidates are cleared at the background boundary.
+  133 offline tests pass. Both November 1 diagnostic cases fail against the
+  pristine prior Poller and pass against the fix. No deployment or hardware
+  verification was performed; ticket 27 retains the physical validation scope.
+
 - **[27 Recover Battery connections after laptop sleep/resume](issues/27-recover-battery-connections-after-laptop-resume.md)**:
   Claimed, ready-for-agent. The [recovery specification](../monbat-recovery/spec.md)
   synthesizes the physical failure and both October 30 investigations. Implement
@@ -152,11 +161,15 @@ Existing configuration retained; rediscovery will save tested concurrency 2 here
   failed: Dashboard opening wakes collection, bat-2 recovers, but bat-1's
   service-discovery timeout leads to repeated EBADF cleanup errors that block
   replacement. Implementation and offline validation completed on 2026-10-31;
-  130 offline tests pass. The post-fix Linux retest is prepared but not deployed
-  or run. Read-only preflight found the remote service still on `9751e3a`;
-  authorization and a coordinated user sleep/wake window are pending. Keep
-  claimed until the physical retest passes. See the ticket's latest comment and
-  [updated validation plan](plans/27-sleep-resume-validation.md).
+  130 offline tests pass. The physical Linux retest remains pending. November 1
+  read-only inspection before ticket 28 found local/remote source matching at `9ab8035`; prompt
+  background retries are now deployed. The [new log diagnosis](validation/27-20261101-cache-diagnosis/report.md)
+  shows all 38 post-startup background passes first fail on stale cached objects,
+  and reproduces retry-deadline drift that can split shared recovery discovery.
+  Shared background discovery and batched recovery are now implemented locally
+  in ticket 28. Deployment and physical validation remain pending.
+  Keep claimed until the physical retest passes. See the ticket's latest comment
+  and [updated validation plan](plans/27-sleep-resume-validation.md).
 
 - **[26 Reconnect Batteries using cached BLE devices](issues/26-reconnect-with-cached-ble-devices.md)**:
   Resolved on 2026-10-28: service-lifetime BLEDevice caching, healthy reads

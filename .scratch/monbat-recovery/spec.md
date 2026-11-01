@@ -70,11 +70,16 @@ failures. Verify the result on the affected Linux laptop after offline tests.
   boundary. Keep a single scheduling owner and typed per-Battery state. Keep
   Linux OS connection details inside the driver/backend boundary rather than
   teaching the Poller D-Bus paths or Bleak private fields.
-- Keep discovery caching in memory for the service lifetime. A cached
-  BLEDevice is a connection candidate, not proof of a live BlueZ object or
-  established radio connection. Fresh discovery replaces matching cache
-  entries; scan misses and errors do not erase useful cached candidates.
-- Preserve deferred shared discovery after a failed cached attempt. Do not
+- During active Dashboard collection and its grace period, keep recent
+  discovery candidates in memory and reuse healthy retained connections. A
+  cached BLEDevice is not proof of a live BlueZ object or radio connection.
+  Active discovery refreshes candidates; active scan misses/errors retain them.
+- Background passes and retries use one shared fresh discovery, reusing those
+  results for all eligible new connections. Clear disconnected candidates when
+  returning to background and after background client release. Keep objects
+  needed by cleanup-pending clients until release is confirmed. Do not try a
+  discovery object from a previous background pass before scanning.
+- Preserve deferred shared discovery after a failed active cached attempt. Do not
   make a second connection attempt for the same Battery in the same pass.
   Make the deferred retry eligible through the scheduler after backoff instead
   of waiting for the next background collection slot.
@@ -82,7 +87,9 @@ failures. Verify the result on the affected Linux laptop after offline tests.
   In background mode, wake for the earliest eligible retry or normal pass.
   A retry-only wake operates on eligible failed Batteries; it must not read
   healthy Batteries early or rebase their normal collection schedule. Batch
-  eligible recovery work and share any required discovery.
+  eligible recovery work and share any required discovery. Include failed
+  Batteries whose backoff expires during a background scan, using its results;
+  exclude cleanup-pending clients and Batteries already attempted in the pass.
 - Preserve the active scheduled-start cadence and skipped-slot behavior.
   Retry eligibility cannot cause overlapping passes or requests. Recovery may
   still delay a following pass within bounded work budgets; independent
@@ -133,6 +140,8 @@ failures. Verify the result on the affected Linux laptop after offline tests.
   success from the original client's disconnect method, and its restriction
   that background retries wait for the regular collection cadence. It retains
   the underlying requirement to release the old OS connection before replacement.
+  The November 1 revision also supersedes service-lifetime/background discovery
+  caching, as approved in [ticket 28](../monbat/issues/28-shared-background-discovery.md).
 
 ## Testing Decisions
 
@@ -154,9 +163,12 @@ failures. Verify the result on the affected Linux laptop after offline tests.
   timed-out disconnect, and unavailable OS inspection. Assert that no replacement
   connects until release is confirmed; later successful verification permits
   recovery. Cover transient original-client cleanup without force-discard.
-- At the scheduler boundary, simulate BlueZ expiry between background passes.
-  With a configured 1800-second interval, verify deferred rediscovery runs at
-  the eligible retry deadline plus bounded work, not 1800 seconds later. Verify
+- Simulate BlueZ expiry between background passes and verify each available
+  Battery saves on the next normal pass with one shared fresh scan. At the
+  scheduler boundary, fail fresh connection setup and verify background recovery
+  runs after backoff rather than another 1800-second slot. Cover two nearly
+  simultaneous retry deadlines and preserve one shared scan when the second
+  deadline matures during discovery. Verify
   retry-only wakes do not read healthy Batteries early, reset regular cadence,
   overlap requests, or repeat already completed work at a stale deadline.
 - Cover 10/20/40/60-second retries, shared discovery, scan errors/misses,

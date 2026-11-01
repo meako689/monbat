@@ -18,6 +18,12 @@ reported bat-2 incident no longer applies and is not a validation target.
 
 ## Scope
 
+The [November 1 background revision](28-shared-background-discovery.md)
+supersedes the background/service-lifetime cache requirements below. Background
+passes share fresh discovery results; recent active Dashboard candidates and
+retained connections remain reusable. The original implementation and validation
+below are historical.
+
 - Cache each configured Battery's discovered BLEDevice in the Poller for the
   lifetime of the running service. Use it for all connections, including
   background polling. Keep it when closing a connection or when a scan misses

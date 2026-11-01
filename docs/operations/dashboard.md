@@ -55,11 +55,20 @@ DEBUG does not enable Bleak-wide tracing. Preserve output, for example with
 screen's `-L -Logfile` options, and capture OS suspend/resume and Bluetooth
 journal evidence separately. Use INFO again after the validation session.
 
-The Poller caches each configured Battery's discovered `BLEDevice` in memory
-for the service lifetime. Active and background connections use that cache.
-Closing a connection, a scan miss, or a scan error keeps the cached object;
-a new matching discovery result replaces it. Restarting requires discovery
-again. Device details are never written to configuration or SQLite.
+Each background pass performs one shared discovery for eligible Batteries
+requiring a new connection. All connections in that pass use those fresh
+`BLEDevice` results. Background collection closes clients after reading and
+discards their discovery objects after cleanup succeeds. It never starts with
+a cached object from an earlier pass.
+
+During active Dashboard collection and its 30-second grace period, healthy
+retained clients are reused without scanning. Recent discovered objects can
+also be reused for active reconnects. A new matching scan refreshes those
+candidates; a scan miss or error keeps them within the active session. Returning
+to background clears disconnected candidates, so opening the Dashboard after
+idle starts with discovery. Objects needed to clean up an owned client remain
+until its release is confirmed. Device details stay in memory and are never
+written to configuration or SQLite.
 
 Each pass finishes healthy retained reads before recovery. A failed read
 enters backoff and closes its old client before a replacement can connect.
@@ -73,12 +82,15 @@ ownership and retries after backoff; an arbitrary socket error alone never
 permits replacement. Other platforms keep the client until its normal cleanup
 succeeds because the BlueZ control path is Linux-specific.
 
-Recovery connects with the cached object, subscribes to notifications, and
-reads a fresh validated response. A failed direct attempt schedules one shared
-rediscovery for the next eligible retry. A discovery attempt, scan miss, or
-scan error then returns to direct cached recovery after backoff. Uncached
-Batteries keep using discovery. There is no second attempt for the same Battery
-in one pass. Recovery can delay the following pass; scheduling remains shared.
+Recovery connects, subscribes to notifications, and reads a fresh validated
+response. Active reconnects can try a recent cached object; a failed direct
+attempt schedules shared rediscovery for the next eligible retry. Active
+discovery failures then alternate with cached recovery after backoff. Background
+recovery always uses shared discovery. Failed Batteries that become eligible
+during a background scan can use its results too, without shortening backoff or
+collecting healthy Batteries early. There is no second connection attempt for
+the same Battery in one pass. Recovery can delay the following pass; scheduling
+remains shared.
 
 On Linux, the cached object requires its BlueZ Device1 object to exist. A
 `device ... not found` failure follows the same deferred rediscovery path;

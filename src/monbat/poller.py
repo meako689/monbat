@@ -82,7 +82,7 @@ class Poller:
         logger.debug(
             "[DEBUG-resume] Battery retry scheduled battery=%s failures=%d retry_at_monotonic=%.6f next=%s cleanup_pending=%s",
             battery_id, state.failures, state.retry_at,
-            "discovery" if state.rediscover or state.device is None else "cached",
+            "discovery" if not self._active() or state.rediscover or state.device is None else "cached",
             state.cleanup_pending,
         )
         message = str(error).casefold()
@@ -152,6 +152,9 @@ class Poller:
             }:
                 state.connection = None
                 state.cleanup_pending = False
+                if not self._active():
+                    state.device = None
+                    state.rediscover = False
                 logger.info(
                     "Retired failed BLE client for %s after BlueZ confirmed %s",
                     battery_id,
@@ -177,6 +180,9 @@ class Poller:
             return False
         state.connection = None
         state.cleanup_pending = False
+        if not self._active():
+            state.device = None
+            state.rediscover = False
         logger.debug("[DEBUG-resume] Cleanup completed battery=%s elapsed=%.3f", battery_id, monotonic() - started)
         if state.persistent:
             logger.info("Persistent BLE connection finished for battery %s", battery_id)
@@ -324,7 +330,7 @@ class Poller:
             if state.cleanup_pending and not await self._close(battery.id):
                 continue
             ready.append(battery)
-        direct = [b for b in ready if self._batteries[b.id].device is not None
+        direct = [b for b in ready if not background and self._batteries[b.id].device is not None
                   and not self._batteries[b.id].rediscover]
         discovery = [b for b in ready if b not in direct]
         logger.debug("[DEBUG-resume] Recovery selection cached=%s discovery=%s", [b.id for b in direct], [b.id for b in discovery])
@@ -353,7 +359,19 @@ class Poller:
             return
         found = {device.address: device for device in devices}
         logger.debug("[DEBUG-resume] Shared discovery completed configured_found=%s", [b.id for b in self._config.batteries if b.address in found])
-        for battery in self._config.batteries:
+        if background:
+            # A nearby retry deadline can mature during this shared scan.
+            # Include it now without collecting healthy Batteries early or
+            # making a second attempt for a Battery already handled this pass.
+            for battery in self._config.batteries:
+                state = self._batteries[battery.id]
+                if (battery not in batteries and state.failures > 0
+                        and monotonic() >= state.retry_at
+                        and state.connection is None and not state.cleanup_pending):
+                    discovery.append(battery)
+        # Background results belong to this pass. Active sessions also refresh
+        # their recent reconnect candidates, including deferred Batteries.
+        for battery in discovery if background else self._config.batteries:
             if battery.address in found:
                 self._batteries[battery.id].device = found[battery.address]
         discovered: list[BatteryConfig] = []
@@ -393,6 +411,9 @@ class Poller:
                     for battery_id, state in self._batteries.items():
                         if state.connection is not None and not state.cleanup_pending:
                             await self._close(battery_id)
+                        if state.connection is None:
+                            state.device = None
+                            state.rediscover = False
                 was_active = active
                 if now >= due:
                     self._running = True

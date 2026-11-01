@@ -106,15 +106,125 @@ class Rig:
         return result
 
 
-@pytest.mark.parametrize("active", [True, False])
-def test_cached_reconnect_without_discovery(monkeypatch: pytest.MonkeyPatch, active: bool) -> None:
+def test_background_cycles_share_fresh_discovery_after_object_expiry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import bleak
+
     async def scenario() -> None:
-        rig = Rig(monkeypatch, active=active)
-        await rig.poller._pass()
-        if active:
-            rig.clients[0].behavior.fail = "read"
+        rig = Rig(monkeypatch, active=False)
+        present: set[str] = set()
+        attempts: list[str] = []
+
+        async def scan(*, timeout: float) -> list[BLEDevice]:
+            rig.scan_count += 1
+            devices = [
+                BLEDevice(b.address, b.name, {"path": f"/synthetic/{rig.scan_count}/{b.id}"})
+                for b in rig.config.batteries
+            ]
+            present.update(device.details["path"] for device in devices)
+            return devices
+
+        class Client:
+            def __init__(self, device: BLEDevice, *, timeout: float) -> None:
+                self.path: str = device.details["path"]
+                self.callback: Callable[[object, bytearray], None] | None = None
+
+            async def connect(self) -> None:
+                attempts.append(self.path)
+                if self.path not in present:
+                    raise BleakError(f"device '{self.path}' not found")
+
+            async def start_notify(
+                self, uuid: str, callback: Callable[[object, bytearray], None],
+            ) -> None:
+                self.callback = callback
+
+            async def write_gatt_char(
+                self, uuid: str, data: bytes, *, response: bool,
+            ) -> None:
+                assert self.callback is not None
+                self.callback(0, bytearray(REAL_STATUS))
+
+            async def disconnect(self) -> None:
+                pass
+
+        monkeypatch.setattr(module.BleakScanner, "discover", scan)
+        monkeypatch.setattr(bleak, "BleakClient", Client)
+        monkeypatch.setattr(module, "BatteryConnection", BatteryConnection)
+        for cycle in range(4):
             await rig.poller._pass()
+            assert len(rig.repo.saved) == 2 * (cycle + 1)
+            assert rig.scan_count == cycle + 1
+            assert len(attempts) == 2 * (cycle + 1)
+            present.clear()  # Observed backend input, not an assumed eviction cause.
+            rig.clock += 1800
+        assert all(state.failures == 0 for state in rig.poller._batteries.values())
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("second_retry", [10.002, 25.0])
+def test_background_scan_reuses_results_for_retries_that_become_due(
+    monkeypatch: pytest.MonkeyPatch, second_retry: float,
+) -> None:
+    async def scenario() -> None:
+        rig = Rig(monkeypatch, active=False)
+        await rig.poller._pass()
+        for state, delay in zip(rig.poller._batteries.values(), (10.001, second_retry), strict=True):
+            state.failures = 1
+            state.rediscover = True
+            state.retry_at = rig.clock + delay
+        before = len(rig.repo.saved)
+        rig.clock += 10.001
+        scan_started = rig.clock
+        fresh = [BLEDevice(d.address, d.name, {"path": "fresh"}) for d in rig.devices]
+
+        async def scan(*, timeout: float) -> list[BLEDevice]:
+            rig.scan_count += 1
             rig.clock += 10
+            return fresh
+
+        monkeypatch.setattr(module.BleakScanner, "discover", scan)
+        await rig.poller._pass(retry_only=True)
+        saved = [battery for battery, _ in rig.repo.saved[before:]]
+        assert saved == (["bat-1", "bat-2"] if second_retry < 20 else ["bat-1"])
+        assert rig.scan_count == 2
+        assert rig.clock == scan_started + 10
+        for client in rig.clients[2:]:
+            assert client.device in fresh
+
+    asyncio.run(scenario())
+
+
+def test_dashboard_after_background_idle_discovers_then_reuses_connections(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def scenario() -> None:
+        rig = Rig(monkeypatch, active=False)
+        await rig.poller._pass()
+        fresh = [BLEDevice(d.address, d.name, {"path": "fresh"}) for d in rig.devices]
+        rig.scans.append(fresh)
+        rig.clock += 1800
+        rig.poller.subscribe()
+        await rig.poller._pass()
+        assert rig.scan_count == 2
+        assert all(client.device in fresh for client in rig.clients[2:])
+        await rig.poller._pass()
+        assert rig.scan_count == 2 and len(rig.clients) == 4
+        assert len(rig.repo.saved) == 6
+        assert all(client.close_count == 0 for client in rig.clients[2:])
+
+    asyncio.run(scenario())
+
+
+def test_active_cached_reconnect_without_discovery(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def scenario() -> None:
+        rig = Rig(monkeypatch)
+        await rig.poller._pass()
+        rig.clients[0].behavior.fail = "read"
+        await rig.poller._pass()
+        rig.clock += 10
         rig.scans.append([])  # A new scan would miss both Batteries.
         await rig.poller._pass()
         assert rig.scan_count == 1
@@ -123,8 +233,6 @@ def test_cached_reconnect_without_discovery(monkeypatch: pytest.MonkeyPatch, act
         assert rig.events.index((0, "close")) < rig.events.index((2, "connect"))
         assert (2, "notify") in rig.events and (2, "read") in rig.events
         assert any(battery == "bat-1" for battery, _ in rig.repo.saved[2:])
-        if not active:
-            assert all(client.close_count == 1 for client in rig.clients)
     asyncio.run(scenario())
 
 
@@ -133,7 +241,10 @@ def test_cached_failure_defers_shared_discovery_and_refreshes_device(
     monkeypatch: pytest.MonkeyPatch, failure: str,
 ) -> None:
     async def scenario() -> None:
-        rig = Rig(monkeypatch, active=False)
+        rig = Rig(monkeypatch)
+        rig.poller._config = replace(
+            rig.config, poller=replace(rig.config.poller, persistent_connections=False),
+        )
         await rig.poller._pass()
         rig.behaviors.extend([Behavior(fail=failure), Behavior(fail=failure)])
         await rig.poller._pass()
@@ -159,7 +270,10 @@ def test_scan_miss_or_error_retains_cache_and_alternates_retries(
     monkeypatch: pytest.MonkeyPatch, scan_failure: bool,
 ) -> None:
     async def scenario() -> None:
-        rig = Rig(monkeypatch, active=False)
+        rig = Rig(monkeypatch)
+        rig.poller._config = replace(
+            rig.config, poller=replace(rig.config.poller, persistent_connections=False),
+        )
         await rig.poller._pass()
         rig.behaviors.extend([Behavior(fail="connect"), Behavior(fail="connect")])
         await rig.poller._pass()
@@ -247,7 +361,7 @@ def test_database_failure_preserves_cache_and_ble_retry_kind(
         monkeypatch.setattr(rig.repo, "save_telemetry", original_save)
         rig.clock += 10
         await rig.poller._pass()
-        assert rig.scan_count == 1 and len(rig.repo.saved) == 2
+        assert rig.scan_count == (1 if active else 2) and len(rig.repo.saved) == 2
         assert len(rig.clients) == (2 if active else 4)
         assert all(state.failures == 0 for state in rig.poller._batteries.values())
     asyncio.run(scenario())
@@ -292,7 +406,7 @@ def test_background_cleanup_failure_blocks_next_connection(monkeypatch: pytest.M
         await rig.poller._pass()
         assert rig.clients[0].close_count == 2
         assert rig.events.index((0, "close")) < rig.events.index((3, "connect"))
-        assert rig.scan_count == 1
+        assert rig.scan_count == 3
     asyncio.run(scenario())
 
 
@@ -309,7 +423,7 @@ def test_backoff_progression_and_no_reset_before_save(monkeypatch: pytest.Monkey
             await rig.poller._pass()
             assert len(rig.clients) == attempts
             rig.clock += 1
-        assert rig.scan_count == 3  # Discovery, direct, discovery, direct, discovery.
+        assert rig.scan_count == 5  # Every eligible background retry discovers.
         await rig.poller._pass()
         assert all(state.failures == 0 and state.retry_at == 0
                    for state in rig.poller._batteries.values())
@@ -356,7 +470,7 @@ def test_shutdown_retries_failed_setup_cleanup_once(
     asyncio.run(scenario())
 
 
-def test_grace_cleanup_retains_cache_and_restart_requires_discovery(
+def test_grace_cleanup_discards_cache_and_restart_requires_discovery(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     async def scenario() -> None:
@@ -366,11 +480,12 @@ def test_grace_cleanup_retains_cache_and_restart_requires_discovery(
         rig.clock += 31
         await rig.poller._pass()
         assert all(c.close_count == 1 for c in rig.clients)
+        assert all(state.device is None for state in rig.poller._batteries.values())
         await rig.poller._pass()
-        assert rig.scan_count == 1
+        assert rig.scan_count == 2
         restarted = Poller(rig.config, rig.repo)
         await restarted._pass()
-        assert rig.scan_count == 2
+        assert rig.scan_count == 3
     asyncio.run(scenario())
 
 
@@ -383,11 +498,11 @@ def test_recovery_timeout_cleans_up_and_defers_discovery(
         await rig.poller._pass()
         rig.behaviors.append(Behavior(pause=stage))
         await asyncio.wait_for(rig.poller._pass(), 1)
-        assert rig.clients[2].close_count == 1 and rig.scan_count == 1
-        assert rig.poller._batteries["bat-1"].rediscover
+        assert rig.clients[2].close_count == 1 and rig.scan_count == 2
+        assert rig.poller._batteries["bat-1"].failures == 1
         rig.clock += 10
         await rig.poller._pass()
-        assert rig.scan_count == 2
+        assert rig.scan_count == 3
     asyncio.run(scenario())
 
 
@@ -568,9 +683,9 @@ def test_available_battery_recovers_after_setup_timeout_and_bad_fd_cleanup(
             saved = [battery_id for battery_id, _ in rig.repo.saved]
             assert saved.count("bat-1") == 1
             assert saved.count("bat-2") == 3
-            assert rig.scan_count == 2
+            assert rig.scan_count == 3
         else:
-            assert rig.scan_count == 1
+            assert rig.scan_count == 2
         replacement = next(
             client for client in clients
             if client.address == first_address and client.attempt == replacement_attempt
@@ -804,7 +919,7 @@ def test_background_retry_wakes_only_failed_battery_and_keeps_collection_cadence
         monkeypatch.setattr(module, "monotonic", real_monotonic)
 
         first_address = config.batteries[0].address
-        stale_devices: set[int] = set()
+        connection_attempts: dict[str, int] = {}
         base_factory = rig.connection
         read_times: dict[str, list[float]] = {b.address: [] for b in config.batteries}
 
@@ -812,10 +927,12 @@ def test_background_retry_wakes_only_failed_battery_and_keeps_collection_cadence
             client = base_factory(device, timeout)
             original_connect = client.connect
             original_read = client.read
-            original_close = client.close
 
             async def connect() -> None:
-                if id(device) in stale_devices:
+                connection_attempts[device.address] = connection_attempts.get(device.address, 0) + 1
+                # The first Battery loses its just-discovered backend object
+                # during the next scheduled pass; only that Battery retries.
+                if device.address == first_address and connection_attempts[device.address] == 2:
                     raise BleakError(f"device '{device.address}' not found")
                 await original_connect()
 
@@ -823,20 +940,14 @@ def test_background_retry_wakes_only_failed_battery_and_keeps_collection_cadence
                 read_times[device.address].append(real_monotonic())
                 return await original_read()
 
-            async def close() -> None:
-                await original_close()
-                if device.address == first_address:
-                    stale_devices.add(id(device))
-
             client.connect = connect
             client.read = read
-            client.close = close
             return client
 
         monkeypatch.setattr(module, "BatteryConnection", connection)
 
-        # Save a normal background pass, then let BlueZ expire only bat-1's
-        # cached object before the next scheduled collection.
+        # Prime a successful pass, then fail only bat-1 during fresh connection
+        # setup to verify prompt retry without collecting healthy bat-2 early.
         await rig.poller._pass()
         fresh_devices = [
             BLEDevice(device.address, device.name, {"path": "refreshed"})
@@ -852,14 +963,14 @@ def test_background_retry_wakes_only_failed_battery_and_keeps_collection_cadence
         task = asyncio.create_task(rig.poller.run())
 
         async def wait_for_reads(address: str, count: int) -> None:
-            while len(read_times[address]) < count:
+            while len(read_times[address]) < count or rig.poller._running:
                 await asyncio.sleep(0.001)
 
         try:
             await asyncio.wait_for(wait_for_reads(first_address, 2), 0.5)
             other_address = next(b.address for b in config.batteries if b.address != first_address)
             assert len(read_times[other_address]) == 2
-            assert rig.scan_count == 2
+            assert rig.scan_count == 3
 
             if background_interval < 1:
                 cadence_deadline = run_started + background_interval + 0.1

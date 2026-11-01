@@ -356,3 +356,20 @@ be confirmed, and where background retry deadlines wait for regular collection
 slots. Keep old-client ownership until OS disconnection or object absence is
 confirmed; schedule eligible background recovery separately without accelerating
 healthy collection. This is a published specification, not deployed behavior.
+
+## Shared background discovery revision — 2026-11-01
+
+[Ticket 28](issues/28-shared-background-discovery.md) supersedes service-lifetime
+discovery caching for background collection. Each background pass or retry uses
+one shared scan and connects eligible Batteries with those fresh results.
+Failed Batteries becoming eligible during the scan reuse its results without
+shortened backoff, duplicate attempts, or early reads of healthy Batteries.
+Background discovery objects are discarded after client release. Returning to
+background clears disconnected active candidates; cleanup-pending clients keep
+the object required to confirm release.
+
+Dashboard collection and its grace period reuse healthy retained connections
+and recent active discovery candidates. A Dashboard session after background
+idle discovers fresh candidates. Cleanup safety, request serialization,
+concurrency, retry cadence, Freshness, and persistence behavior remain as
+specified in the [recovery specification](../monbat-recovery/spec.md).
