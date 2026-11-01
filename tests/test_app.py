@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import struct
 import sys
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 import pytest
+from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 from playwright.async_api import Page, Route, expect, async_playwright
 
@@ -22,7 +25,7 @@ from monbat.app import (
     _load_config,
     build_app,
 )
-from monbat.bms import BatteryTelemetry, CellReading
+from monbat.bms import BatteryTelemetry
 from monbat.db import TelemetryRepository
 
 
@@ -84,30 +87,25 @@ def _make_telemetry(
     current_a: float = 1.25,
     cell_voltages_v: tuple[float, ...] = (3.280, 3.282, 3.281),
 ) -> BatteryTelemetry:
-    return BatteryTelemetry(
-        timestamp=timestamp,
-        voltage_v=26.25,
-        current_a=current_a,
-        power_w=round(26.25 * current_a, 2),
-        soc_percent=50.0,
-        remaining_ah=50.0,
-        capacity_ah=100.0,
-        cell_temp_c=24,
-        bms_temp_c=25,
-        cell_readings=tuple(CellReading(slot, voltage) for slot, voltage in enumerate(cell_voltages_v, 1)),
-        temperature_slots_c=(24, 25, 0, 0, 0),
-        balancing_mask=0,
-        problem_flags=4,
-        raw_response=bytes.fromhex("000065019355aa007c3300000c340000030d030d030d030d00000000000000000000000000000000000000000000000000000000170018000000000000001027102700000000000000000000000000000000000000000000000063006400000000000000000000008b"),
-        reported_soc_percent=37.0,
-        soc_source="bms",
-        soh_percent=98.0,
-        cycle_count=123,
-        bms_state_raw=4,
-        bms_state="disabled",
-        protection_flags=4,
-        active_protections=("Overcharge",),
-    )
+    from test_bms import REAL_STATUS
+    from monbat.bms import parse_bms_payload
+
+    frame = bytearray(REAL_STATUS)
+    frame[16:48] = bytes(32)
+    for index, voltage in enumerate(cell_voltages_v):
+        struct.pack_into("<H", frame, 16 + index * 2, round(voltage * 1000))
+    struct.pack_into("<H", frame, 12, 26_250)
+    struct.pack_into("<i", frame, 48, round(current_a * 1000))
+    struct.pack_into("<5h", frame, 52, 24, 25, 0, 0, 0)
+    struct.pack_into("<H", frame, 62, 5_000)
+    struct.pack_into("<I", frame, 64, 10_000)
+    struct.pack_into("<Q", frame, 76, 4)
+    struct.pack_into("<H", frame, 88, 4)
+    struct.pack_into("<H", frame, 90, 37)
+    struct.pack_into("<I", frame, 92, 98)
+    struct.pack_into("<I", frame, 96, 123)
+    frame[-1] = sum(frame[:-1]) & 0xFF
+    return parse_bms_payload(bytes(frame), timestamp=timestamp)
 
 
 def test_latest_empty_includes_config_for_each_battery() -> None:
@@ -231,6 +229,106 @@ def test_history_is_empty_when_no_rows_match() -> None:
 
     assert response.status_code == 200
     assert response.json() == []
+
+
+def test_captured_protocol_fields_round_trip_through_sqlite_api_and_sse(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from test_bms import REAL_STATUS
+    from monbat.bms import parse_bms_payload
+
+    frame = bytearray(REAL_STATUS)
+    frame[16:48] = bytes(32)
+    struct.pack_into("<H", frame, 16, 3300)
+    struct.pack_into("<H", frame, 20, 3350)
+    struct.pack_into("<5h", frame, 52, -24, 0, -32768, 0, 32767)
+    struct.pack_into("<Q", frame, 76, 0x8000000180000004)
+    struct.pack_into("<I", frame, 84, 0x80008005)
+    struct.pack_into("<H", frame, 12, 26_240)
+    struct.pack_into("<i", frame, 48, -1_250)
+    frame[-1] = sum(frame[:-1]) & 0xFF
+    captured_variant = bytes(frame)
+    telemetry = parse_bms_payload(
+        b"stale-prefix" + captured_variant + b"trailing-data", timestamp=990.0
+    )
+
+    high_word_only = bytearray(captured_variant)
+    struct.pack_into("<Q", high_word_only, 76, 0x8000000000000000)
+    high_word_only[-1] = sum(high_word_only[:-1]) & 0xFF
+    high_word_telemetry = parse_bms_payload(
+        bytes(high_word_only), timestamp=991.0
+    )
+
+    path = tmp_path / "telemetry.sqlite3"
+    repo = TelemetryRepository(str(path))
+    asyncio.run(repo.init_db())
+    asyncio.run(repo.save_telemetry("bat-1", telemetry))
+    asyncio.run(repo.save_telemetry("bat-1", high_word_telemetry))
+    monkeypatch.setattr(app_module.time, "time", lambda: 1_000.0)
+    config = _make_config(
+        batteries=(BatteryConfig("bat-1", "Battery 1", "synthetic-device"),)
+    )
+    app = build_app(config, repo, start_poller=False)
+
+    with TestClient(app) as client:
+        latest_response = client.get("/api/latest")
+        history_response = client.get("/api/history?hours=24")
+        assert latest_response.status_code == 200
+        assert history_response.status_code == 200
+
+        latest = latest_response.json()["bat-1"]["telemetry"]
+        first, latest_history = history_response.json()
+        assert latest_response.json()["bat-1"]["cell_delta_mv"] == 50.0
+        assert first["cell_readings"] == [
+            {"slot": 1, "voltage_v": 3.3},
+            {"slot": 3, "voltage_v": 3.35},
+        ]
+        assert first["cell_voltages_v"] == [3.3, 3.35]
+        assert first["temperature_slots_c"] == [-24, 0, -32768, 0, 32767]
+        assert first["balancing_mask"] == 0x80008005
+        assert first["balancing_cell_slots"] == [1, 3, 16]
+        assert first["problem_flags"] == "8000000180000004"
+        assert first["protection_flags"] == 0x80000004
+        assert first["raw_response_hex"] == captured_variant.hex()
+        assert latest_history["problem_flags"] == "8000000000000000"
+        assert latest_history["protection_flags"] == 0
+        assert latest_history["active_protections"] == []
+        assert latest_history["raw_response_hex"] == high_word_telemetry.raw_response.hex()
+        assert latest["problem_flags"] == "8000000000000000"
+        assert latest["balancing_mask"] == 0x80008005
+        assert "raw_response" not in latest
+        assert "raw_response_hex" not in latest
+
+        events_endpoint = next(
+            route.endpoint
+            for route in app.routes
+            if isinstance(route, APIRoute) and route.path == "/api/events"
+        )
+
+        async def read_first_event() -> dict[str, object]:
+            response = await events_endpoint()
+            stream = response.body_iterator
+            try:
+                data_line = await anext(stream)
+            finally:
+                await stream.aclose()
+            return json.loads(data_line.removeprefix("data: "))
+
+        event = asyncio.run(read_first_event())
+        assert isinstance(event, dict)
+        latest_by_battery = event["latest"]
+        assert isinstance(latest_by_battery, dict)
+        event_battery = latest_by_battery["bat-1"]
+        assert isinstance(event_battery, dict)
+        event_latest = event_battery["telemetry"]
+        assert isinstance(event_latest, dict)
+        assert event_latest == latest
+        assert "raw_response" not in event_latest
+        assert "raw_response_hex" not in event_latest
+        summary = event["summary"]
+        assert isinstance(summary, dict)
+        assert summary["power_w"] == -32.8
 
 
 def test_history_rejects_non_positive_hours() -> None:
@@ -410,7 +508,7 @@ def test_bank_summary_unavailable_and_recovers(monkeypatch: pytest.MonkeyPatch,
         repo.latest['bat-2'] = first
         result = client.get('/api/summary').json()
         assert result['available'] is True
-        assert result['soc_percent'] == 50
+        assert result['soc_percent'] == 37
         assert result['reason'] is None
 
 
@@ -430,7 +528,7 @@ def test_summary_section_and_single_refresh_timer() -> None:
 
 
 @asynccontextmanager
-async def _browser_page() -> AsyncIterator[Page]:
+async def _browser_page() -> AsyncGenerator[Page, None]:
     async with async_playwright() as playwright:
         browser = await playwright.chromium.launch()
         try:

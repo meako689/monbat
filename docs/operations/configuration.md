@@ -60,8 +60,10 @@ Discovery asks before overwriting an existing configuration.
 Previous Telemetry databases are not migrated. Stop the old service and set
 `sqlite_path` to a new file before running this schema. Keep your existing
 polling, server, and Battery settings. The service creates the new SQLite
-schema in WAL mode and preserves the old file. Startup rejects an incompatible Telemetry schema with instructions to select
-a new `sqlite_path`, before changing WAL or schema. Existing files remain intact.
+schema in WAL mode and preserves the old file. Startup checks the full Telemetry
+column definitions, primary key, and battery/time index before changing journal
+mode or schema. A mismatch stops with instructions to select a new
+`sqlite_path`; it does not migrate, modify, or delete the existing file.
 
 The fresh schema stores original cell slots as `cell_readings_json`, five
 temperatures as `temperature_slots_json`, a u32 `balancing_mask`, the u64 problem

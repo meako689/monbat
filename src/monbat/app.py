@@ -249,7 +249,10 @@ def _telemetry_json(telemetry: BatteryTelemetry, *, history: bool = False) -> di
         "capacity_ah": telemetry.capacity_ah,
         "cell_temp_c": telemetry.cell_temp_c,
         "bms_temp_c": telemetry.bms_temp_c,
-        "cell_readings": [asdict(cell) for cell in telemetry.cell_readings],
+        "cell_readings": [
+            {"slot": cell.slot, "voltage_v": cell.voltage_v}
+            for cell in telemetry.cell_readings
+        ],
         "cell_voltages_v": telemetry.cell_voltages_v,
         "temperature_slots_c": telemetry.temperature_slots_c,
         "reported_soc_percent": telemetry.reported_soc_percent,
