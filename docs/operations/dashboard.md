@@ -10,7 +10,9 @@ HTML-looking labels.
 
 The Dashboard opens `/api/events` through native JavaScript `EventSource`.
 The stream sends an initial stored snapshot and checks for saved Telemetry and
-freshness transitions every second. Reconnection is automatic; multiple tabs
+freshness transitions every second. On service shutdown, open HTTP/SSE requests have five seconds to finish.
+Remaining requests are cancelled before normal Poller/BLE cleanup; tabs may
+stay open and reconnect after restart. Reconnection is automatic; multiple tabs
 share one Poller. Hidden tabs count as connected subscribers.
 
 The first subscriber wakes collection immediately. While subscribed, collection

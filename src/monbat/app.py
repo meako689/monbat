@@ -615,5 +615,5 @@ def serve(config_path: str = "config.toml", *, log_level: str = "info") -> None:
     }
     uvicorn.run(
         app, host=config.server.host, port=config.server.port, log_config=log_config,
-        log_level=log_level,
+        log_level=log_level, timeout_graceful_shutdown=5,
     )

@@ -661,3 +661,81 @@ def test_dashboard_preserves_state_and_named_protections(problem_flags: int, sta
                 await expect(card.locator('.protections')).to_contain_text('<img src=x onerror="window.injected=true">')
                 await expect(card.locator('img')).to_have_count(0)
     asyncio.run(scenario())
+
+
+def test_service_shutdown_closes_open_sse_and_runs_cleanup(tmp_path: Path) -> None:
+    import http.client
+    import signal
+    import socket
+    import subprocess
+    import time
+
+    with socket.socket() as probe:
+        probe.bind(('127.0.0.1', 0))
+        port = probe.getsockname()[1]
+    config = tmp_path / 'config.toml'
+    config.write_text(f'''[poller]
+poll_interval_seconds = 600
+timeout_seconds = 10
+sqlite_path = "{tmp_path / 'telemetry.db'}"
+[server]
+host = "127.0.0.1"
+port = {port}
+[[batteries]]
+id = "one"
+name = "Battery"
+address = "synthetic-address"
+''')
+    cleanup = tmp_path / 'cleanup.txt'
+    script = '''
+import sys
+from pathlib import Path
+from contextlib import asynccontextmanager
+import monbat.app as module
+original_build = module.build_app
+
+def build(config, repo):
+    app = original_build(config, repo, start_poller=False)
+    original_lifespan = app.router.lifespan_context
+    @asynccontextmanager
+    async def lifespan(app):
+        async with original_lifespan(app):
+            yield
+        Path(sys.argv[2]).write_text('finished')
+    app.router.lifespan_context = lifespan
+    return app
+
+module.build_app = build
+module.serve(sys.argv[1])
+'''
+    with (tmp_path / 'service.log').open('w') as log:
+        process = subprocess.Popen([sys.executable, '-c', script, str(config), str(cleanup)], stdout=log, stderr=log)
+        connection = http.client.HTTPConnection('127.0.0.1', port, timeout=2)
+        try:
+            deadline = time.monotonic() + 10
+            while True:
+                try:
+                    connection.request('GET', '/api/events')
+                    response = connection.getresponse()
+                    break
+                except OSError:
+                    connection.close()
+                    assert process.poll() is None
+                    if time.monotonic() >= deadline:
+                        pytest.fail('Service did not start')
+                    time.sleep(0.05)
+            assert response.status == 200
+            assert response.readline().startswith(b'data:')
+            started = time.monotonic()
+            process.send_signal(signal.SIGINT)
+            try:
+                process.wait(timeout=8)
+            except subprocess.TimeoutExpired:
+                pytest.fail('Open SSE request prevented bounded shutdown')
+            assert time.monotonic() - started < 8
+            assert cleanup.read_text() == 'finished'
+        finally:
+            connection.close()
+            if process.poll() is None:
+                process.kill()
+                process.wait(timeout=5)

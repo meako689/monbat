@@ -12,6 +12,13 @@ Technical architecture and implementation specification for `monbat`: an offgrid
 
 ## Decisions so far
 
+- **[33 Bound browser shutdown](issues/33-bound-browser-shutdown.md)**:
+  Resolved locally on 2026-11-01. HTTP/SSE shutdown allows five seconds, then
+  cancels requests before application cleanup. Deployment process/port guards
+  remain intact. Real open-SSE shutdown regression and 192 offline tests pass;
+  app typechecking and both reviews pass. Takes effect on next service restart;
+  no live deployment performed.
+
 - **[32 Remove Dashboard protocol details](issues/32-remove-dashboard-protocol-details.md)**:
   Resolved locally on 2026-11-01 at the user's request after live review.
   Removed ticket 23's disclosure/notice; original cell labels and ordinary

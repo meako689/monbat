@@ -18,9 +18,10 @@ Database preparation, backup, and rollback configuration are manual.
    SQLite files private and Git-ignored or outside the checkout. Include `-wal`
    and `-shm` sidecars in local exclusions when needed. Ongoing storage and the
    only rollback copy must not live under `/tmp`.
-4. Close Dashboard/SSE tabs for a background startup check. Note which Batteries
-   were available before cutover. The script requires every configured Battery
-   to produce a fresh reading before declaring success.
+4. Dashboard tabs may stay open during deployment. Note which Batteries were
+   available before cutover. The script requires every configured Battery to
+   produce a fresh reading before declaring success. Close subscribers only
+   when specifically checking background startup/cadence.
 
 The Linux host needs the checkout's existing `.venv` with Python 3.11+, Git,
 `uv`, and `screen`. The host's checkout
@@ -69,7 +70,10 @@ Add `--start-stopped` only when the service is already stopped, such as after
 manual database preparation or a failed cutover. `--log-level` overrides the
 existing level; otherwise the script preserves it, or uses INFO when starting
 from a stopped state. `--timeout` bounds each Git/environment or HTTP validation
-phase (default 120 seconds); `--stop-timeout` bounds shutdown (default 60).
+phase (default 120 seconds); `--stop-timeout` bounds total process shutdown
+(default 60), including application/BLE cleanup after the five-second HTTP
+grace period. Older deployments without the HTTP timeout may still need their
+SSE connections closed during the first upgrade.
 
 The script sends itself over SSH and executes with the checkout's `.venv/bin/python`. It does not depend on the
 host's older system Python. Its steps
@@ -80,7 +84,10 @@ are fixed:
 2. Save the previous commit and log level in private state. Fetch origin and
    require the exact candidate to exist on a fetched remote branch.
 3. Send SIGINT to the identified server after checking its process start identity.
-   Wait for exit and port release. A shutdown timeout prevents replacement.
+   Uvicorn gives open HTTP/SSE requests five seconds, then cancels remaining
+   requests and runs application/Poller cleanup. Browser tabs reconnect after
+   restart. Wait for process exit and port release; the separate shutdown
+   deadline still prevents replacement if application cleanup cannot finish.
 4. Select the exact commit with `git switch --detach`, then run `uv sync --locked`.
    The deployed checkout deliberately has detached HEAD; the branch tip is not
    the source of deployment identity.
