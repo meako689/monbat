@@ -21,6 +21,7 @@ host permissions.
 ## Documentation
 
 - [Configuration and database setup](docs/operations/configuration.md)
+- [Linux deployment and rollback](docs/operations/deployment.md)
 - [Dashboard and refresh behavior](docs/operations/dashboard.md)
 - [BMS protocol and Telemetry](docs/protocol/redodo.md)
 - [Specification and tasks](.scratch/monbat/map.md)

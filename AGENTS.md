@@ -23,6 +23,7 @@ Before domain changes, read [GLOSSARY.md](GLOSSARY.md) and relevant ADRs as
 specified in [domain.md](docs/agents/domain.md).
 
 - Configuration, discovery, or storage setup: [configuration.md](docs/operations/configuration.md).
+- Deployment, service restart, or rollback: read [deployment.md](docs/operations/deployment.md) before remote changes.
 - Poller scheduling, freshness, Dashboard, or HTTP API: [dashboard.md](docs/operations/dashboard.md).
 - BLE parsing or BMS fields: [redodo.md](docs/protocol/redodo.md) and spec section 4.2.
 
