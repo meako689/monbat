@@ -138,9 +138,17 @@ The Dashboard opens on the Dashboard tab. The History tab requests
 SOC for configured Batteries in the preceding 24 hours. The chart ends at the
 time History was entered, uses the browser's local time labels, and stays fixed
 until the user leaves and re-enters the tab. It plots stored SOC on a fixed
-0–100% scale, keeps isolated readings visible, and breaks a Battery's trace
-only when consecutive timestamps differ by more than the configured
-`poll_interval_seconds`; equality remains connected.
+0–100% scale and connects consecutive recorded readings for each Battery,
+including across polling gaps. A Battery with only one reading shows a dot.
+Lines stop at the first and last recorded reading; inspection shows recorded
+values only.
+
+Vertical grid lines mark each whole local clock hour. Desktop labels every
+grid line with its two-digit local hour; time labels are spaced more widely
+on narrow screens. Connected readings use a thin line without
+repeated markers; isolated readings use small dots without outlines. Hover,
+tap, or keyboard focus highlights one reading and shows its recorded details.
+Every recorded reading remains available for inspection.
 
 The History tab shows loading, empty, and request-failure states. A failed
 request is retried on the next entry. Switching tabs leaves the page's single

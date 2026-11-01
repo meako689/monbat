@@ -338,8 +338,9 @@ _DASHBOARD_HTML = """<!DOCTYPE html>
     .history-tooltip { min-height:1.8rem; margin:.5rem 0 0; padding:.4rem .65rem; background:#1c2026; border-radius:5px; font-variant-numeric:tabular-nums; }
     .history-reading { cursor:pointer; touch-action:manipulation; }
     .history-reading-target { fill:transparent; pointer-events:all; }
-    .history-reading-dot { stroke:var(--bg); stroke-width:2; vector-effect:non-scaling-stroke; }
-    .history-reading:hover .history-reading-dot,.history-reading:focus .history-reading-dot { stroke:var(--text); stroke-width:3; }
+    .history-reading-dot { stroke:none; }
+    .history-reading-connected .history-reading-dot { visibility:hidden; }
+    .history-reading-selected .history-reading-dot { visibility:visible; r:4px; stroke:var(--text); stroke-width:1; }
     @media (max-width:520px) { body { padding:1rem; } header { align-items:flex-start; flex-direction:column; } }
   </style>
 </head>
@@ -459,6 +460,19 @@ _DASHBOARD_HTML = """<!DOCTYPE html>
       chartTitle.textContent = 'State of charge by Battery during the preceding 24 hours';
       historyChart.append(chartTitle);
 
+      const firstHour = new Date(windowStart * 1000);
+      firstHour.setMinutes(0, 0, 0);
+      if (firstHour.getTime() < windowStart * 1000) {
+        firstHour.setTime(firstHour.getTime() + 3600000);
+      }
+      for (let timestamp = firstHour.getTime() / 1000; timestamp <= windowEnd; timestamp += 3600) {
+        const x = xFor(timestamp);
+        historyChart.append(createSvgElement('line', {
+          class: 'history-grid-line history-hour-grid-line',
+          x1: x, y1: top, x2: x, y2: height - bottom,
+        }));
+      }
+
       for (const soc of [100, 75, 50, 25, 0]) {
         const y = yFor(soc);
         const line = createSvgElement('line', {
@@ -482,17 +496,32 @@ _DASHBOARD_HTML = """<!DOCTYPE html>
         }),
       );
 
-      for (let tick = 0; tick <= 4; tick += 1) {
-        const timestamp = windowStart + (windowEnd - windowStart) * tick / 4;
+      const labelTimestamps = [];
+      if (width >= 520) {
+        for (let timestamp = firstHour.getTime() / 1000; timestamp <= windowEnd; timestamp += 3600) {
+          labelTimestamps.push(timestamp);
+        }
+      } else {
+        for (let tick = 0; tick <= 2; tick += 1) {
+          let timestamp = windowStart + (windowEnd - windowStart) * tick / 2;
+          if (tick === 1) {
+            const firstHourTimestamp = firstHour.getTime() / 1000;
+            timestamp = firstHourTimestamp + Math.round((timestamp - firstHourTimestamp) / 3600) * 3600;
+          }
+          labelTimestamps.push(timestamp);
+        }
+      }
+      labelTimestamps.forEach((timestamp, index) => {
         const x = xFor(timestamp);
         const label = createSvgElement('text', {
           class: 'history-axis-label history-x-axis-label',
           x, y: height - 11,
-          'text-anchor': tick === 0 ? 'start' : tick === 4 ? 'end' : 'middle',
+          'text-anchor': width >= 520 ? 'middle' : index === 0 ? 'start' : index === 2 ? 'end' : 'middle',
         });
-        label.textContent = formatHistoryTime(new Date(timestamp * 1000));
+        const date = new Date(timestamp * 1000);
+        label.textContent = width >= 520 ? String(date.getHours()).padStart(2, '0') : formatHistoryTime(date);
         historyChart.append(label);
-      }
+      });
 
       const readingsByBattery = new Map(
         dashboardConfig.batteries.map(battery => [battery.id, []]),
@@ -501,6 +530,7 @@ _DASHBOARD_HTML = """<!DOCTYPE html>
         readingsByBattery.get(reading.battery_id)?.push(reading);
       }
 
+      let selectedReading = null;
       dashboardConfig.batteries.forEach((battery, index) => {
         const color = historyColor(index);
         const legendItem = document.createElement('li');
@@ -520,31 +550,14 @@ _DASHBOARD_HTML = """<!DOCTYPE html>
           class: 'history-series', role: 'group', 'aria-label': battery.name,
         });
         series.setAttribute('data-battery-id', battery.id);
-        let segment = [];
-        let previousTimestamp = null;
-        const segments = [];
-        for (const reading of batteryReadings) {
-          if (
-            previousTimestamp !== null
-            && reading.timestamp - previousTimestamp > dashboardConfig.pollIntervalSeconds
-          ) {
-            segments.push(segment);
-            segment = [];
-          }
-          segment.push(reading);
-          previousTimestamp = reading.timestamp;
-        }
-        if (segment.length > 0) segments.push(segment);
-
-        for (const connectedReadings of segments) {
-          if (connectedReadings.length < 2) continue;
-          const points = connectedReadings.map(reading => `${xFor(reading.timestamp)},${yFor(reading.soc_percent)}`).join(' ');
-          const first = connectedReadings[0];
-          const last = connectedReadings[connectedReadings.length - 1];
+        if (batteryReadings.length >= 2) {
+          const points = batteryReadings.map(reading => `${xFor(reading.timestamp)},${yFor(reading.soc_percent)}`).join(' ');
+          const first = batteryReadings[0];
+          const last = batteryReadings[batteryReadings.length - 1];
           const line = createSvgElement('polyline', {
-            points, fill: 'none', stroke: color, 'stroke-width': 3,
+            points, fill: 'none', stroke: color, 'stroke-width': 2,
             'stroke-linecap': 'round', 'stroke-linejoin': 'round', role: 'img',
-            'aria-label': `${battery.name} SOC trace segment: ${connectedReadings.length} connected readings, ${formatLocalTimestamp(new Date(first.timestamp * 1000))} to ${formatLocalTimestamp(new Date(last.timestamp * 1000))}`,
+            'aria-label': `${battery.name} SOC trace: ${batteryReadings.length} connected readings, ${formatLocalTimestamp(new Date(first.timestamp * 1000))} to ${formatLocalTimestamp(new Date(last.timestamp * 1000))}`,
           });
           series.append(line);
         }
@@ -555,7 +568,8 @@ _DASHBOARD_HTML = """<!DOCTYPE html>
           const x = xFor(reading.timestamp);
           const y = yFor(reading.soc_percent);
           const point = createSvgElement('g', {
-            class: 'history-reading', role: 'button', tabindex: 0, 'aria-label': detail,
+            class: batteryReadings.length >= 2 ? 'history-reading history-reading-connected' : 'history-reading',
+            role: 'button', tabindex: 0, 'aria-label': detail,
           });
           const title = createSvgElement('title');
           title.textContent = detail;
@@ -565,10 +579,15 @@ _DASHBOARD_HTML = """<!DOCTYPE html>
               class: 'history-reading-target', cx: x, cy: y, r: 12,
             }),
             createSvgElement('circle', {
-              class: 'history-reading-dot', cx: x, cy: y, r: 4.5, fill: color,
+              class: 'history-reading-dot', cx: x, cy: y, r: 2, fill: color,
             }),
           );
-          const showDetail = () => { historyTooltip.textContent = detail; };
+          const showDetail = () => {
+            selectedReading?.classList.remove('history-reading-selected');
+            selectedReading = point;
+            point.classList.add('history-reading-selected');
+            historyTooltip.textContent = detail;
+          };
           point.addEventListener('pointerenter', showDetail);
           point.addEventListener('focus', showDetail);
           point.addEventListener('click', showDetail);
@@ -795,7 +814,6 @@ def build_app(
     @app.get("/", response_class=HTMLResponse)
     async def dashboard() -> HTMLResponse:
         page_config = json.dumps({
-            "pollIntervalSeconds": config.poller.poll_interval_seconds,
             "batteries": [
                 {"id": battery.id, "name": battery.name}
                 for battery in config.batteries

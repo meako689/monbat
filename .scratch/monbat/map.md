@@ -54,6 +54,16 @@ Technical architecture and implementation specification for `monbat`: an offgrid
   tunnel; post-grace connection cleanup passed, while long background cadence
   remains unobserved. [Deployment evidence](validation/30-20261101-deployment.md).
   [Dashboard behavior](../../docs/operations/dashboard.md).
+  A later visual follow-up is resolved locally: whole-hour vertical grid,
+  thinner connected traces, small isolated markers, one highlighted reading,
+  and time labels that fit mobile screens. All 199 offline tests and changed
+  app typechecking pass; desktop/mobile rendering was inspected. This
+  follow-up has not been deployed. See ticket 30's visual follow-up validation.
+  The next user follow-up replaces the strict gap rule: all consecutive
+  recorded readings for each Battery connect, and desktop labels every hourly
+  grid line. Single readings and mobile readability are preserved. All 199
+  offline tests and typechecking pass; desktop/tablet/mobile were inspected.
+  These changes remain local and have not been deployed.
 
 - **[23 Show protocol fields in Battery details](issues/23-display-protocol-fields-without-overclaiming.md)**:
   Resolved locally on 2026-11-01: original cell slots, qualified balancing,

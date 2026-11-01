@@ -13,14 +13,14 @@ The Dashboard has no view of Battery SOC over time.
 
 Implement the confirmed [SOC History specification](../../monbat-history/spec.md).
 Add Dashboard/History tabs and a static last-24-hours SOC chart with one trace
-per Battery. Break traces at gaps greater than the loaded deployment's
-`poll_interval_seconds`, with no tolerance.
+per Battery. Connect consecutive recorded readings across polling gaps and
+label every hourly grid line on desktop, as requested in the visual follow-up.
 
 ## Acceptance and validation
 
 - Implement the behavior and states in the specification, using existing
   storage/history and browser/app seams.
-- Verify navigation, window bounds, recorded values, configured gap thresholds,
+- Verify navigation, window bounds, recorded values, connections across gaps,
   hover/tap, empty/error states, and no History auto-refresh.
 - Preserve SSE collection and Dashboard behavior across tab changes.
 - Run offline regressions and inspect desktop/mobile chart rendering.
@@ -36,6 +36,25 @@ re-entry. It uses configured Battery colors/names, local-time labels, a fixed
 readings, loading, empty, and failure states are preserved. Tab changes keep
 the one SSE connection and Dashboard updates active. Storage, APIs, BLE, and
 collection timing are unchanged.
+
+### Visual follow-up — 2026-11-01
+
+Added vertical grid lines at each whole local clock hour. Intermediate time
+labels align with the grid; narrow layouts use fewer labels to avoid overlap.
+Connected readings now use 2px traces without repeated dots. Isolated readings
+use small, unoutlined dots; inspecting a reading highlights only that reading.
+All recorded values and the strict gap boundary remain available. Updated the
+History specification and focused Dashboard documentation. This follow-up is
+local and has not been deployed.
+
+### Connected traces and hourly labels — 2026-11-01
+
+The next user follow-up supersedes the original strict gap rule. Every
+Battery's consecutive recorded readings now connect, including across polling
+gaps. A Battery with a single reading retains its small dot. Desktop labels
+every hourly grid line with its two-digit local hour; mobile retains sparse
+labels. Removed the unused polling interval from browser chart configuration.
+These changes remain local and have not been deployed.
 
 ## Validation
 
@@ -53,6 +72,31 @@ collection timing are unchanged.
   violations; the history-window snapshot is passed as one value, and shared
   test-app request forwarding now uses one helper. Spec review found no
   behavior mismatch or scope creep.
+
+### Visual follow-up validation
+
+- Browser regressions exercise 240 frequent readings across two Batteries,
+  one isolated reading, hourly grid placement, non-overlapping time labels,
+  keyboard inspection, and one selected marker at a time on desktop/mobile.
+  Existing mouse/touch tests also verify the selected marker is visible.
+- `uv run --offline --dev pytest -m 'not integration' -q` — 199 passed,
+  2 live integration tests deselected.
+- `uv run --offline --with ty ty check src/monbat/app.py tests/test_app.py` —
+  all checks passed. `git diff --check` passed.
+- Inspected synthetic-history screenshots at 1280×720 and 390×844.
+- Scanned staged, unstaged, and untracked changes against local identifiers;
+  no matches. Confirmed `config.toml` and `.env.local` are ignored by Git.
+
+### Connected traces and hourly labels validation
+
+- Browser tests verify connections across a nondefault polling threshold,
+  separate Battery traces, retained single readings, and every desktop hour
+  aligned with its grid line. Dense-history tests keep all 242 readings
+  available and verify labels do not overlap.
+- Offline suite: 199 passed, 2 live integration tests deselected.
+- Changed app/test typechecking and `git diff --check` passed.
+- Synthetic-history layouts inspected at 1280×800, 768×800, and 390×844.
+- Local identifier scan passed; local configuration files remain Git-ignored.
 
 ## Deployment
 
@@ -73,3 +117,10 @@ collection timing are unchanged.
 - 2026-11-01: Published from the confirmed design using the to-spec skill.
   The user accepted the existing browser/app test seam. Ready for implementation;
   no application code or deployment changes are part of this specification task.
+- 2026-11-01: Reopened and claimed for the requested visual follow-up:
+  hourly vertical grid lines and readable markers during frequent updates.
+  Resolved locally after implementation, 199 offline tests, typechecking,
+  desktop/mobile inspection, and the local identifier scan passed.
+- 2026-11-01: Claimed and resolved the next requested follow-up: connect the
+  dots across polling gaps and label every hour on desktop. This replaces
+  the original strict-gap chart behavior; no collection settings changed.

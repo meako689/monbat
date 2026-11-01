@@ -657,7 +657,7 @@ def test_history_tab_loads_on_entry_stays_static_and_reloads_on_reentry(
     asyncio.run(scenario())
 
 
-def test_history_chart_uses_stored_soc_and_strict_configured_gap_boundary(
+def test_history_chart_connects_stored_soc_across_polling_gaps(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     async def scenario() -> None:
@@ -669,7 +669,7 @@ def test_history_chart_uses_stored_soc_and_strict_configured_gap_boundary(
             replace(_make_telemetry(first_time), soc_percent=0.0),
             replace(_make_telemetry(first_time + 19), soc_percent=100.0),
             replace(_make_telemetry(first_time + 39), soc_percent=37.5),
-            replace(_make_telemetry(first_time + 59.001), soc_percent=62.5),
+            replace(_make_telemetry(now - 1), soc_percent=62.5),
             replace(_make_telemetry(now - 24 * 3600 - 1), soc_percent=25.0),
             replace(_make_telemetry(now + 1), soc_percent=90.0),
         ]
@@ -718,15 +718,90 @@ def test_history_chart_uses_stored_soc_and_strict_configured_gap_boundary(
                 assert await page.get_by_role('button', name=re.compile(r'% SOC')).count() == 5
 
                 first_battery_segments = page.get_by_role(
-                    'img', name=re.compile(r'3 connected readings')
+                    'img', name=re.compile(r'4 connected readings')
                 )
                 await expect(first_battery_segments).to_have_count(1)
-                local_start_label = await page.evaluate(
-                    "new Date((window.testNowMs / 1000 - 86400) * 1000).toLocaleTimeString(undefined, {hour: '2-digit', minute: '2-digit', hourCycle: 'h23'})"
-                )
-                await expect(page.locator('.history-x-axis-label').first).to_have_text(local_start_label)
+                assert await page.locator('.history-series polyline').count() == 1
                 await expect(page.locator('.history-y-axis-label').first).to_have_text('100%')
                 await expect(page.locator('.history-y-axis-label').last).to_have_text('0%')
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize('mobile', [False, True])
+def test_history_hourly_grid_and_dense_readings_stay_readable(mobile: bool) -> None:
+    async def scenario() -> None:
+        now = 1_750_000_000.0
+        dense = [
+            replace(_make_telemetry(now - 1200 + index * 10), soc_percent=60 - index * 0.05)
+            for index in range(120)
+        ]
+        isolated = replace(_make_telemetry(now - 7200), soc_percent=40.0)
+        repo = StubTelemetryRepository(history={
+            'one': [isolated, *dense],
+            'two': [replace(reading, soc_percent=reading.soc_percent - 1) for reading in dense],
+            'three': [replace(isolated, soc_percent=25.0)],
+        })
+        config = _make_config(batteries=(
+            BatteryConfig('one', 'First Battery', 'synthetic-one'),
+            BatteryConfig('two', 'Second Battery', 'synthetic-two'),
+            BatteryConfig('three', 'Third Battery', 'synthetic-three'),
+        ))
+        with TestClient(build_app(config, repo, start_poller=False)) as client:
+            async with _browser_page(mobile=mobile) as page:
+                await _install_dashboard_app_bridge(page, client, [], now_ms=int(now * 1000))
+                await page.goto('http://monbat.test/')
+                await page.get_by_role('tab', name='History').click()
+                await expect(page.locator('.history-reading')).to_have_count(242)
+                grid = await page.locator('.history-hour-grid-line').evaluate_all(
+                    "lines => lines.map(line => Number(line.getAttribute('x1')))"
+                )
+                assert len(grid) == 24
+                spacing = grid[1] - grid[0]
+                assert all(abs((second - first) - spacing) < 0.001 for first, second in zip(grid, grid[1:]))
+                # The first line is at the next whole local clock hour, rather
+                # than one hour after the arbitrary window start.
+                first_hour_offset = await page.evaluate("""() => {
+                    const start = new Date(window.testNowMs - 86400000);
+                    const hour = new Date(start);
+                    hour.setMinutes(0, 0, 0);
+                    if (hour < start) hour.setTime(hour.getTime() + 3600000);
+                    return (hour - start) / 3600000;
+                }""")
+                assert abs(grid[0] - (56 + spacing * first_hour_offset)) < 0.001
+                if not mobile:
+                    label_positions = await page.locator('.history-x-axis-label').evaluate_all(
+                        "labels => labels.map(label => Number(label.getAttribute('x')))"
+                    )
+                    assert label_positions == grid
+                    expected_hours = await page.evaluate("""() => {
+                        const hour = new Date(window.testNowMs - 86400000);
+                        hour.setMinutes(0, 0, 0);
+                        if (hour.getTime() < window.testNowMs - 86400000) hour.setTime(hour.getTime() + 3600000);
+                        return Array.from({length: 24}, (_, index) => String(new Date(hour.getTime() + index * 3600000).getHours()).padStart(2, '0'));
+                    }""")
+                    assert await page.locator('.history-x-axis-label').all_text_contents() == expected_hours
+                labels = await page.locator('.history-x-axis-label').evaluate_all(
+                    "labels => labels.map(label => { const box = label.getBoundingClientRect(); return {left: box.left, right: box.right}; })"
+                )
+                assert all(first['right'] < second['left'] for first, second in zip(labels, labels[1:]))
+                connected = page.get_by_role('button', name=re.compile(r'First Battery, .*54\.1% SOC$')).first
+                await expect(connected.locator('.history-reading-dot')).to_be_hidden()
+                await expect(page.get_by_role('img', name=re.compile(r'121 connected readings'))).to_have_count(1)
+                await expect(page.get_by_role('img', name=re.compile(r'120 connected readings'))).to_have_count(1)
+                isolated_point = page.get_by_role('button', name=re.compile(r', 25\.0% SOC$'))
+                await expect(isolated_point.locator('.history-reading-dot')).to_be_visible()
+                assert await isolated_point.locator('.history-reading-dot').evaluate(
+                    "dot => Number(dot.getAttribute('r')) <= 2 && getComputedStyle(dot).stroke === 'none'"
+                )
+                await connected.focus()
+                await expect(connected.locator('.history-reading-dot')).to_be_visible()
+                await expect(page.locator('#history-tooltip')).to_have_text(
+                    await connected.get_attribute('aria-label') or ''
+                )
+                await isolated_point.focus()
+                await expect(connected.locator('.history-reading-dot')).to_be_hidden()
+                await expect(page.locator('.history-reading-selected')).to_have_count(1)
 
     asyncio.run(scenario())
 
@@ -819,6 +894,7 @@ def test_history_reading_details_work_with_mouse_and_touch(mobile: bool) -> None
                 else:
                     await reading.hover()
                 await expect(page.locator('#history-tooltip')).to_have_text(detail)
+                await expect(reading.locator('.history-reading-dot')).to_be_visible()
                 assert 'Workshop Battery' in detail
                 assert '65.0% SOC' in detail
 

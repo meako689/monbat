@@ -35,8 +35,8 @@ the user leaves and enters it again.
     reflects the time I opened it.
 11. As the owner, I want History to remain static while open, so that the
     chart does not move while I inspect it.
-12. As the owner, I want gaps longer than the configured poll interval to
-    break the line, so that missing Telemetry is visible.
+12. As the owner, I want consecutive recorded readings connected for each
+    Battery, so that its charge trend remains visible across polling gaps.
 13. As the owner, I want only recorded values, so that missing history does
     not appear as a fabricated SOC value.
 14. As the owner, I want isolated readings to remain visible, so that short
@@ -67,18 +67,21 @@ the user leaves and enters it again.
 - Preserve the single existing SSE connection across tab changes. Dashboard
   updates and existing Poller subscription behavior continue independently
   of the static History view. Do not change collection intervals.
-- Supply the loaded deployment configuration's `poll_interval_seconds` to
-  the chart through the existing page configuration boundary. Do not hardcode
-  the default or use the active interval or Freshness threshold.
-- Connect consecutive readings for the same Battery only when their timestamp
-  difference is at most `poll_interval_seconds`. A strictly larger difference
-  breaks the line. Apply no extra tolerance. Keep isolated readings visible.
+- Connect all consecutive recorded readings for the same Battery with straight
+  lines, including across polling gaps. A Battery with only one reading keeps
+  its dot visible. Polling intervals do not control chart connections.
 - Never join lines between Batteries, synthesize zero SOC, or extend a line
-  before its first or after its last recorded reading. Short gaps within the
-  threshold are straight connections between recorded values.
+  before its first or after its last recorded reading. Lines between recorded
+  values do not add synthesized readings or hover values.
 - Use a fixed 0–100% vertical axis and browser-local time labels. Hover/tap
   details identify the Battery, timestamp, and recorded SOC. Distinct colors
   and a named legend identify the traces.
+- Mark each whole local clock hour with a vertical grid line and label every
+  hour beneath its grid line on desktop, using two-digit local hours. Space
+  time labels more widely on narrow screens. Draw connected readings as thin
+  lines without repeated markers; draw isolated readings as small dots without outlines.
+  Highlight a single inspected reading on hover, tap, or keyboard focus.
+  Preserve all readings and their details, including frequent updates.
 - Show loading, request-failure, and empty states. For no Telemetry in the
   window, show “No readings in the last 24 hours”. A Battery without history
   must not hide another Battery's available trace. A failed request must not
@@ -99,8 +102,10 @@ the user leaves and enters it again.
   exact SVG path serialization.
 - Cover distinct per-Battery values, literal configured names, zero/100% SOC,
   partial history, isolated readings, and chronological plotting.
-- Use a nondefault configured poll interval. Cover gaps below, exactly at,
-  and above that interval, independently of active cadence and Freshness.
+- Use a nondefault configured poll interval. Verify all recorded readings
+  connect across gaps below, at, and above that interval, with separate Battery
+  traces and no extension beyond their first/last readings. Verify desktop
+  hourly labels align with each grid line and mobile labels remain readable.
 - Verify no history request on initial Dashboard load, one request on History
   entry, no automatic requests or chart movement as time/SSE updates advance,
   and a fresh request/window on re-entry.
@@ -127,9 +132,14 @@ the user leaves and enters it again.
 
 ## Further Notes
 
-The user confirmed the complete scope on 2026-11-01 and subsequently accepted
-the browser/app testing seam. The strict gap rule can break lines after minor
-collection delays; this follows the confirmed no-tolerance threshold.
+The user confirmed the initial scope on 2026-11-01 and subsequently accepted
+the browser/app testing seam.
+The user requested hourly grid lines and clearer rendering of frequent updates
+later that day; these are presentation changes within the existing recorded
+history window.
+The next follow-up requested connecting the dots and labeling every hour on
+desktop. This supersedes the original strict `poll_interval_seconds` gap rule:
+all consecutive recorded readings for each Battery now connect.
 
 The existing history response contains more protocol data than this chart needs.
 One request per entry is sufficient for this first version. A compact endpoint
